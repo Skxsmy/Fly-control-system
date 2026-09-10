@@ -13,3 +13,5 @@ frontend/tsconfig.tsbuildinfo
 *.log
 .qa/
 .runtime/
+**/*.ai-settings.json
+**/*.ai-settings.json.*

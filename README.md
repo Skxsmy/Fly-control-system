@@ -112,19 +112,46 @@ Accepting a cooling plan creates handling reminders only. It does not fabricate 
 
 Automatic setup planning and cooling are included. Flexible rescheduling of other operations is manual, because this first version does not assume biological tolerance ranges for your protocols.
 
-The [experiment planner design proposal](docs/experiment-planner-design.md) describes researcher-authored L1/L3 workflows, backward scheduling across containers, and optional AI with switchable cloud/local connections. These are planned additions, not implemented features. Transgenesis remains deferred until the researcher defines its workflow.
+The [experiment planner design proposal](docs/experiment-planner-design.md) describes researcher-authored L1/L3 workflows, backward scheduling across containers, and reviewed plan application. That workflow editor and deterministic experiment solver are not implemented. The integrated assistant below can discuss proposed schedules using existing records; its replies are not solver-validated plans. Transgenesis remains deferred until the researcher defines its workflow.
 
-The standalone [assistant interaction prototype](docs/assistant-design.html) demonstrates editing an experiment and its attached assistant panel. Open it in a browser; it uses fictional examples and keeps edits in memory only. It does not connect a model or change laboratory records. See the [interaction design](docs/assistant-interaction-design.md) for the walkthrough and implementation boundaries.
+The standalone [experiment interaction prototype](docs/assistant-design.html) remains a design reference for editing steps and an attached assistant panel. It uses fictional examples, resets on reload, and has no live model or laboratory-database connection. The application's actual assistant is reached through **Assistant** in the main navigation. See [assistant interaction design](docs/assistant-interaction-design.md) for the implemented behavior and remaining planner boundaries.
+
+## AI assistant
+
+Open **Assistant** in the main navigation, or **Assistant** from a container to select that record as context. Configure the connection through **Connection**, **Connect a model**, or **Protocols & settings → AI connection**.
+
+1. Choose **Cloud API** or **Local model**. Both use an OpenAI-compatible Chat Completions endpoint; models requiring a different API format need another adapter.
+2. Enter the **Base URL**, including `/v1` if your server uses it, and the exact **Model ID** available from that provider or server. Enter the base URL, not the full `/chat/completions` route. Cloud URLs require HTTPS. Local URLs must use localhost or a loopback address; start the local model server first.
+3. Enter the API key if the server requires one. A saved key is retained when the field is left empty. Use **Remove saved key** to remove it explicitly. Changing the server's origin clears the previous saved key unless a replacement is supplied.
+4. Choose **Save and test**. This saves the visible profile and sends a short connection-test request without laboratory records. A successful result confirms that the configured model returned text. **Save connection** saves without contacting the provider. Cloud and local profiles have separate saved values; switching the active profile requires saving it.
+5. Return to **Assistant**. Choose whether to **Include workspace data**, then use all containers or **Selected containers and sources**. Set an optional target date and choose **Plan L1 dissection** or **Plan L3 dissection** to fill an editable message, or write your own. The target date is included in the sent message when set.
+
+Workspace context includes selected containers and source ancestors, their temperature records, activity, reminders, egg batches and cooling plans, plus laboratory settings, weekly availability, calendar exceptions, and general reminders. Notes and genotypes are included. With a cloud connection, these records and the conversation are sent to the configured API. Turning off workspace data sends the conversation without a fresh workspace snapshot. Changing the data selection starts a new conversation and keeps the unsent message; changing a model connection also starts fresh. A stale connection is rejected before data is sent, so another tab cannot silently redirect an existing conversation to a different provider.
+
+Replies show the model and counts of workspace records actually included. Oversized context produces an error asking for a smaller selection; the backend does not silently remove records. **Cancel request** retains the unsent message, and a failed request can be edited and retried. The conversation stays in memory while navigating the app, but it is not saved to the database or browser storage and is lost when the page reloads or its tab closes. The model receives at most the latest 12 messages, retaining complete exchanges within a character limit; the interface reports when earlier exchanges are omitted.
+
+The assistant is read-only. It cannot create containers, move reminders, record physical operations, apply a plan, browse sources, or verify a protocol. It receives the application's biological distinctions and current lab presets, including one-day virgin collection and the researcher's calendar D5 third-instar rule. Stage suitability, unknown quantities, unverified selected genotypes, and missing protocol timings still require researcher input. Proposed L1/L3 schedules are conversation text, not a saved executable workflow or a deterministic feasibility result.
+
+Connection settings are stored outside the laboratory database at `data/.flykeeper.db.ai-settings.json` by default. On Windows, saved keys are protected with the current user's DPAPI credentials; they are not returned to the browser or included in workspace backups. Other platforms can use `FLYKEEPER_AI_CLOUD_API_KEY` or `FLYKEEPER_AI_LOCAL_API_KEY`, bound to that profile's `FLYKEEPER_AI_CLOUD_ENDPOINT` or `FLYKEEPER_AI_LOCAL_ENDPOINT`. `FLYKEEPER_AI_CONFIG` selects a different connection-settings file. No local profile silently falls back to a cloud provider.
 
 ## Data and backup
 
-- `data/flykeeper.db`: SQLite database containing all personal records and settings.
+- `data/flykeeper.db`: SQLite database containing personal laboratory records and workspace settings.
 - `backups/`: consistent SQLite snapshots created by **Download backup**.
 - The launch window displays startup and runtime diagnostics.
 
-The backup endpoint uses SQLite's online backup API. Restore with the app stopped: preserve your current database separately, replace `data/flykeeper.db` with the downloaded snapshot, and restart. Sync exported snapshots rather than a running database. `FLYKEEPER_DB` can select a different local database path for tests or another isolated workspace.
+Open **Protocols & settings → Backup & restore**. **Download backup** creates a consistent SQLite snapshot using SQLite's online backup API. It includes containers, egg batches, reminders, activity, temperature history, availability, cooling plans, and workspace settings. AI connection profiles and keys are excluded.
 
-To clean up a mistaken/test container, open it and choose **Delete container permanently**. The preview lists its own reminders, logs, temperatures, plans, and egg batches; enter its exact label to confirm. A full SQLite backup is required and saved in `backups/` before deletion. Failure to back up leaves records untouched. Deletion is blocked while other containers or independently attached batch reminders depend on it; review downstream records first. A changed preview must be refreshed. This operation differs from End culture/Discard, which retain history and reserve labels. Permanent deletion releases the label; automatic naming chooses the lowest unused number for each container prefix and assigns a fresh internal identity. Existing containers are never renumbered. Restore from the full backup with the app stopped if necessary.
+To restore without stopping the app:
+
+1. Choose **Import backup**, select a Flykeeper database backup of up to 64 MB, and click **Check backup**.
+2. Compare the incoming and current record counts and laboratory time zones. Checking a file does not replace your workspace.
+3. Type `RESTORE` and choose **Restore workspace**. This replaces the current laboratory records and settings; it does not merge them. A consistent recovery copy of the current workspace is saved first. If the workspace changes after the preview, recheck the file before restoring.
+4. The app reloads the restored records and clears its in-memory assistant conversation. **Download recovery backup** retrieves the pre-restore workspace if you need to undo the replacement; import that file through the same flow. The recovery copy also remains in `backups/`.
+
+Your AI connections and keys remain unchanged during restore. Invalid or unsupported files are rejected before replacement; if the recovery copy cannot be saved, restoration does not proceed. Sync exported snapshots rather than a running database. `FLYKEEPER_DB` can select a different local database path for tests or another isolated workspace.
+
+To clean up a mistaken/test container, open it and choose **Delete container permanently**. The preview lists its own reminders, logs, temperatures, plans, and egg batches; enter its exact label to confirm. A full SQLite backup is required and saved in `backups/` before deletion. Failure to back up leaves records untouched. Deletion is blocked while other containers or independently attached batch reminders depend on it; review downstream records first. A changed preview must be refreshed. This operation differs from End culture/Discard, which retain history and reserve labels. Permanent deletion releases the label; automatic naming chooses the lowest unused number for each container prefix and assigns a fresh internal identity. Existing containers are never renumbered. Use **Import backup** to restore a pre-deletion full backup if necessary; restoring also replaces any subsequent workspace changes.
 
 ## Architecture
 

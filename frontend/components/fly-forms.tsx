@@ -7,6 +7,8 @@ import { api } from '@/lib/api';
 import { endAfterMove } from '@/lib/reminder-window';
 import { WorkflowFields, workflowFrom } from './workflow-fields';
 import { VirginCollectionGuidance } from './virgin-collection-guidance';
+import { BackupPanel, type RestoreResult } from './backup-panel';
+import { AISettings } from './ai-settings';
 import { t, fmtDate, fmtTime, fmtNumber, weekday, availableLocales } from '@/lib/i18n';
 import type { AppState, Culture, Task, Template, Settings, Suggestions, EggBatch, Incubation, Workflow } from '@/lib/types';
 
@@ -50,7 +52,7 @@ export function ProtocolFields({template, purpose, goal}: {template: Template; p
   const collection = !purpose || purpose === 'virgin' || (purpose === 'cross' && (!goal || goal === 'virgins'));
   const larvae = purpose === 'larvae' || (purpose === 'cross' && goal === 'third_instar');
   const keys = templateNumbers.filter(key => !larvae || ['transfer_day','max_transfers'].includes(key)).filter(key => !purpose || (key === 'stock_interval' ? purpose === 'stock' : ['collection_day','virgin_hours25','virgin_hours18'].includes(key) ? collection : key === 'watch_day' ? purpose !== 'stock' : true));
-  return <div className="protocol-fields"><div className="form-grid">{keys.map(key => <Field key={key} label={t(`settings.${key}`)}><input name={`template.${key}`} type="number" required min={key === 'max_transfers' ? 0 : key === 'rate18' ? 0.01 : 1} max={key === 'rate18' ? 0.99 : undefined} step={key === 'rate18' ? 0.01 : 1} defaultValue={template[key] as number}/></Field>)}</div>
+  return <div className="protocol-fields"><div className="form-grid">{keys.map(key => <Field key={key} label={t(`settings.${key}`)} hint={key === 'rate18' ? t('settings.rate18Help') : undefined}><input name={`template.${key}`} type="number" required min={key === 'max_transfers' ? 0 : key === 'rate18' ? 0.01 : 1} max={key === 'rate18' ? 0.99 : undefined} step={key === 'rate18' ? 0.01 : 1} defaultValue={template[key] as number}/></Field>)}</div>
     {collection && <Field label={t('settings.windows')}><input name="template.windows" placeholder={t('calendar.windowsPlaceholder')} defaultValue={windowsText(template.windows)} required/></Field>}</div>;
 }
 export function templateFrom(form: FormData, base?: Template): Template {
@@ -127,7 +129,7 @@ export function ContainerForm({state, source, mode, eggBatch, close, saved}: {st
       {kind === 'egg_laying' && source?.genotype_review_required && <p className="notice warning">{t('eggs.genotypeReview')} {t('eggs.legacyGenotypes', {female:source.female_genotype, male:source.male_genotype})}</p>}
       {kind === 'egg_laying' && source?.setup_time_review_required && <p className="notice warning">{t('eggs.timeReview')}</p>}
       {kind === 'petri_dish' && <IncubationFields key={batchId} value={source?.incubation || undefined} batch={batch} now={state.now}/>}
-      {!mode && <section className="form-section"><h3>{t('container.initialState')}</h3><div className="form-grid">
+      {!mode && <section className="form-section"><h3>{t('container.initialState')}</h3>{['vial','bottle'].includes(kind) && <p className="section-help">{t('container.initialStateHelp')}</p>}<div className="form-grid">
         <Field label={t('container.status')}><select name="initial_status" defaultValue="auto"><option value="auto">{t('container.autoStatus')}</option>{['active', 'planned'].map(x => <option key={x} value={x}>{t(`status.${x}`)}</option>)}</select></Field>
         {kind !== 'petri_dish' && <Field label={t('container.parentState')}><select name="parents" defaultValue="present">{['present', 'removed', 'transferred'].map(x => <option key={x} value={x}>{t(`parents.${x}`)}</option>)}</select></Field>}
         <Field label={t('container.stage')}><select name="stage" defaultValue="unobserved">{['unobserved', 'first_instar', 'larvae', 'pupae', 'eclosion'].map(x => <option key={x} value={x}>{t(`stage.${x}`)}</option>)}</select></Field>
@@ -177,7 +179,7 @@ export function ReminderForm({state, event, cultureId, date, batch, close, saved
       await api(event ? `/events/${event.id}` : '/events', event ? 'PATCH' : 'POST', body); await saved(); close();
     }}>
       {!event && <><Field label={t('task.title')}><input name="title" required maxLength={200} defaultValue={batch ? `${t('purpose.imaging')} · ${batch.label}` : ''}/></Field><Field label={t('container.id')}><select name="container_id" disabled={!!batch} defaultValue={batch?.source_id || cultureId || ''}><option value="">{t('task.general')}</option>{state.containers.filter(c => ['active', 'planned'].includes(c.status)).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></Field></>}
-      {event && <label className="check-label"><input type="checkbox" checked={keepDuration} onChange={e => setKeepDuration(e.target.checked)}/>{t('task.keepDuration')}</label>}
+      {event && <><p className="section-help">{t('task.rescheduleHelp')}</p><label className="check-label"><input type="checkbox" checked={keepDuration} onChange={e => setKeepDuration(e.target.checked)}/>{t('task.keepDuration')}</label></>}
       <Field label={t('task.start')}><input name="due" type="datetime-local" value={start} onChange={e => moveStart(e.target.value)} onInput={e => moveStart(e.currentTarget.value)} onBlur={e => moveStart(e.target.value)} required/></Field>
       <Field label={t('task.end')}><input name="end" type="datetime-local" value={end} readOnly={keepDuration} onChange={e => setEnd(e.target.value)} required min={start}/></Field>
       {!event && <label className="check-label"><input name="critical" type="checkbox"/>{t('task.critical')}</label>}
@@ -217,15 +219,26 @@ export function Planner({culture, close, saved}: {culture: Culture; close: () =>
 
 function ShutdownPanel({onShutdown}: {onShutdown: () => void}) {
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  return <section className="panel"><h2>{t('runtime.title')}</h2><Button disabled={busy} variant="outline" onClick={async () => {setBusy(true); setError(''); try {const runtime = await api<{managed:boolean; token:string}>('/runtime'); if (!runtime.managed) throw new Error(t('error.shutdown_unavailable')); await api('/shutdown','POST',{token:runtime.token}); onShutdown();} catch(e) {setError((e as Error).message); setBusy(false);}}}>{t('runtime.stop')}</Button>{error && <p className="error" role="alert">{error}</p>}</section>;
+  return <section className="panel"><h2>{t('runtime.title')}</h2><p className="section-help">{t('runtime.help')}</p><Button disabled={busy} variant="outline" onClick={async () => {setBusy(true); setError(''); try {const runtime = await api<{managed:boolean; token:string}>('/runtime'); if (!runtime.managed) throw new Error(t('error.shutdown_unavailable')); await api('/shutdown','POST',{token:runtime.token}); onShutdown();} catch(e) {setError((e as Error).message); setBusy(false);}}}>{t('runtime.stop')}</Button>{error && <p className="error" role="alert">{error}</p>}</section>;
 }
 
-export function SettingsPage({settings, saved, onShutdown}: {settings: Settings; saved: () => Promise<void>; onShutdown: () => void}) {
+export type SettingsSection = 'general' | 'backup' | 'ai';
+export function SettingsPage({settings, saved, onShutdown, section, onSectionChange, onRestored}: {settings: Settings; saved: () => Promise<void>; onShutdown: () => void; section: SettingsSection; onSectionChange: (section: SettingsSection) => void; onRestored: (result: RestoreResult) => Promise<void>}) {
+  return <div className="settings-page"><fieldset className="settings-sections" aria-label={t('settings.sections')}>
+    {(['general', 'backup', 'ai'] as const).map(value => <Button key={value} variant={section === value ? 'default' : 'outline'} aria-pressed={section === value} onClick={() => onSectionChange(value)}>{t(`settings.${value}Tab`)}</Button>)}
+  </fieldset>
+    {section === 'general' && <GeneralSettingsPage key={JSON.stringify(settings)} settings={settings} saved={saved} onShutdown={onShutdown}/>}
+    {section === 'backup' && <BackupPanel restored={onRestored}/>}
+    {section === 'ai' && <AISettings/>}
+  </div>;
+}
+
+function GeneralSettingsPage({settings, saved, onShutdown}: {settings: Settings; saved: () => Promise<void>; onShutdown: () => void}) {
   return <div className="settings-layout"><section className="panel"><div className="panel-title"><h2>{t('settings.protocol')}</h2></div><Form submit={async form => {
     const weekly: Record<string, string[][]> = {}; for (let i = 0; i < 7; i++) weekly[String(i)] = parseWindows(fieldValue(form, `weekly.${i}`));
     await api('/settings', 'PUT', {...settings, locale: (fieldValue(form, 'locale') || settings.locale), timezone: fieldValue(form, 'timezone'), weekly, template: templateFrom(form)}); await saved();
   }}><ProtocolFields template={settings.template}/>
     <section className="form-section"><h2>{t('calendar.weekly')}</h2>{Array.from({length: 7}, (_, i) => <Field key={i} label={weekday(i)}><input name={`weekly.${i}`} placeholder={t('calendar.windowsPlaceholder')} defaultValue={windowsText(settings.weekly[String(i)])}/></Field>)}</section>
     <section className="form-section"><h2>{t('settings.general')}</h2><Field label={t('settings.timezone')}><input name="timezone" defaultValue={settings.timezone} required/></Field><Field label={t('common.language')}><select name="locale" defaultValue={settings.locale}>{availableLocales().map(locale => <option key={locale.code} value={locale.code}>{locale.name}</option>)}</select></Field></section>
-  </Form></section><aside className="settings-aside"><ShutdownPanel onShutdown={onShutdown}/><section className="panel"><h2>{t('settings.backup')}</h2><a className="button-link" href="/api/backup" download>{t('settings.download')}</a></section></aside></div>;
+  </Form></section><aside className="settings-aside"><ShutdownPanel onShutdown={onShutdown}/></aside></div>;
 }

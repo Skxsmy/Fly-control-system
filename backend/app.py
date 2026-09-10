@@ -2,6 +2,7 @@
 import json
 import os
 import sqlite3
+import sys
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
@@ -969,6 +970,11 @@ def egg_batch_action(bid: str, model: EggBatchAction):
                     event['status'] = 'cancelled' if model.action == 'cancel' else 'done'
                     save_event(db, event)
         return batch
+
+from . import ai_assistant, workspace_restore
+
+ai_assistant.install_routes(app, sys.modules[__name__])
+app.include_router(workspace_restore.make_router(sys.modules[__name__]))
 
 FRONTEND = ROOT / "frontend" / "dist" / "local"
 if FRONTEND.exists():

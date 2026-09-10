@@ -1,4 +1,8 @@
+import aiEn from './ai-en';
+import backupEn from './backup-en';
 const en: Record<string, string> = {
+  ...aiEn, ...backupEn,
+  'nav.assistant': 'Assistant', 'assistant.askContainer': 'Ask assistant about this container',
   'app.name': 'Flykeeper',
   'nav.today': 'Today', 'nav.containers': 'Containers', 'nav.calendar': 'Calendar', 'nav.settings': 'Protocols & settings',
   'nav.workspace': 'WORKSPACE', 'nav.manage': 'MANAGE',
@@ -43,7 +47,11 @@ const en: Record<string, string> = {
   'eggs.label': 'Egg batch label',
   'eggs.source': 'Source egg batch', 'eggs.external': 'External / manually recorded eggs', 'eggs.dishSetup': 'Dish setup date',
   'eggs.start': 'Egg laying starts', 'eggs.end': 'Egg laying ends', 'eggs.layTemperature': 'Temperature during egg laying',
-  'eggs.incubation': 'Estimated hatching window', 'eggs.minHours': 'Earliest hatching age (hours)', 'eggs.maxHours': 'Latest hatching age (hours)', 'eggs.referenceTemperature': 'Temperature for this estimate',
+  'eggs.incubation': 'Estimated hatching window', 'eggs.minHours': 'Earliest hatch (hours after laying)', 'eggs.maxHours': 'Latest hatch (hours after laying)', 'eggs.referenceTemperature': 'Temperature for this estimate',
+  'container.initialStateHelp': 'For an existing culture, use its original setup date.',
+  'settings.rate18Help': '0.5 means half the modeled development rate at 25°C.',
+  'task.rescheduleHelp': 'This time stays fixed when development estimates change.',
+  'runtime.help': 'Closing this tab leaves Flykeeper running. Shut down to stop it.',
   'eggs.temperatureReview': 'Temperature differs from this estimate. Review the hatching window.',
   'eggs.reviewBadge': 'Review temperature estimate', 'eggs.ageLabel': 'Egg age',
   'eggs.ageShort': '{min}–{max} h',

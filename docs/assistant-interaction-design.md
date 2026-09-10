@@ -1,53 +1,72 @@
-# Assistant interaction design
+# Assistant and experiment-planner interaction
 
-Status: interactive design prototype. The application has not acquired an AI connection or experiment-planning backend through this artifact.
+Status: the main application now includes an optional, connected, read-only assistant and AI connection settings. The editable experiment canvas remains a separate design prototype. A deterministic solver for researcher-authored experiment workflows and reviewed plan application are not implemented.
 
-Open [assistant-design.html](assistant-design.html) in a browser. It is one standalone file with no packages, external assets, network calls, or laboratory-database writes. All changes live in page memory and reset on reload. Example bottle A and example vial B are fictional records for interaction review, not copied laboratory data. The displayed dates are examples.
+## Main application entry points
 
-## Screen and content boundaries
+**Assistant** is a page in the main navigation. Opening it from a container preselects that container as workspace context. **Connection** and the unconfigured state's **Connect a model** lead to **Protocols & settings → AI connection**. Connection setup is part of the application; opening the standalone HTML prototype is not required.
 
-The experiment is the primary screen. The assistant is a narrow, dismissible panel attached to that experiment, with its name and target time as context. The screen contains inputs, concrete source information, editable steps, missing-input messages, and date conflicts. There is no explanatory welcome card, architectural narrative, product promise, or account of the user's design requirements.
+The conversation shows the active model and connection type, message history, a composer, and the latest request's state. A separate context panel selects laboratory data. An optional target date and the **Plan L1 dissection** and **Plan L3 dissection** actions help begin a message. These buttons populate editable text; they do not generate a fake answer or create an experiment. When set, the target date is included explicitly in the outbound message and the displayed user message.
 
-The target operation, date, time window, genotype, and quantity sit above materials. The researcher can select a source and choose Parents or Offspring for L1, with an optional selected quantity that remains unknown when unfilled. A source's eclosion estimate is visible only when it matters to that selection. Source selection does not perform a transfer or imply using every adult. L3 can use the source culture or a proposed new culture.
+The interface keeps practical explanations at the point of use: which data will be sent, what saving a key means, why a selected record is unavailable, and how to correct a failed request. Design rationale, conversation history about the product, and engineering limitations remain in documentation. A response is labeled **Assistant suggestion**, without an Apply action that would imply a working experiment execution backend.
 
-Steps are an editable ordered list. Each has a name, dates/times, and any relevant user-authored timing or stage-acceptance requirement. L1 explicitly separates laying, egg collection, and Petri-dish incubation. Add, remove, and move controls work directly in the list; the target step cannot be removed. Missing requirements appear only after Check draft, with empty date/time fields marked instead of repeating an unscheduled sentence in every row. Actual time-order and future-operation weekday conflicts appear beside the relevant step as values change. Recorded source setup is historical, so it is exempt from future-operation weekday checks. The target step follows the target fields, and editing its times updates those fields.
+## Connect a cloud or local model
 
-The assistant has no fabricated conversation, generated answer, or simulated connection. Its prompt and Send button remain disabled. Connection settings accept separate cloud and local endpoint/model drafts; saving one does not enable the assistant. No credential input is presented because the artifact cannot securely store or use a credential. The production connection screen will add actual credential handling, connection validation, and a verified connection state when that integration exists.
+1. Open **Protocols & settings → AI connection**.
+2. Select **Cloud API** or **Local model**. The implemented adapter uses the OpenAI-compatible Chat Completions format. Enter the server's base URL, including `/v1` when required, rather than the full `/chat/completions` route.
+3. Enter the exact model ID exposed by that provider or local server. Cloud connections require HTTPS; local connections require localhost or a loopback address. Start a local server before testing it.
+4. Supply a key when the server requires authentication. An empty replacement field preserves the saved key. **Remove saved key** explicitly schedules its removal on save. Changing the server origin drops a prior saved key unless a replacement is entered.
+5. **Save connection** saves the visible profile without making a model request. **Save and test** saves it and requests a short response from that model, without sending laboratory records. A success result means that the tested endpoint/model returned text. Authentication, model, connection, and timeout failures show specific corrections.
+6. Return to **Assistant** and send a message.
 
-## Walkthrough
+Cloud and local profiles have independent saved values. Switching profile controls preserves the other profile's unsaved fields in the open form; saving one profile does not silently save the hidden profile. A key typed or autofilled into the visible form is captured before switching controls. Key values are never returned by the settings API and are not persisted in browser storage. On Windows, saved credentials use user-bound DPAPI protection in a configuration file outside the laboratory database. They are excluded from database backups. Profile-specific environment keys are supported by the backend for deployments without Windows key storage; configuration details are in [README.md](../README.md).
 
-1. Edit the target date, time, genotype, or quantity. The assistant's context and target step update immediately. Use Check draft to summarize current input and date conflicts.
-2. Change Adults to Offspring. The source's estimated eclosion date appears. Select example vial B and move the target before September 30 to see a material-timing warning. A mismatched target genotype is also indicated.
-3. Fill an egg-laying date/time window, then schedule egg collection. Add an incubation timing rule and L1 acceptance criteria in their own steps. These fields begin blank: the prototype does not invent a biological dissection interval or treat a hatch estimate as L1 readiness. Missing-input prose appears only after Check draft; per-step success prose remains hidden.
-4. Add a step, rename it, enter a time, move it, and remove it. The list order is the prototype's dependency order. Schedule a step on a weekend, overlap it with its immediate predecessor, or place it after the target to see a specific conflict.
-5. Choose L3 dissection. Its collection date initially matches the example target date, while collection time and collection-to-dissection interval are intentionally unfilled. For a new culture, calendar D5 derives the proposed setup date from the collection date: September 28 gives September 23. The day offset is editable. Using an existing source exposes its recorded setup date and identifies a mismatch with the chosen collection day. None of these dates assert an observed stage.
-6. Switch back to L1. Each operation's step draft is retained in page memory. The common target and material fields remain shared.
-7. Close and reopen the assistant. Open Connection, draft a cloud endpoint/model, switch to a local profile, and draft its values separately. Save draft updates the selected profile caption; the assistant remains disconnected and sending remains unavailable. Cancel dismisses unsaved profile edits. Reload clears both experiment edits and profile drafts.
+Requests carry the connection revision that the user saw. If another tab or process changes the active connection before a chat or test request, the backend rejects it before contacting a model. Chat then reloads the connection, clears the prior transcript, and keeps the unsent message. It does not automatically resend to the changed provider.
 
-## What the prototype checks
+## Workspace context and conversation
 
-- Required target date/time, target genotype and quantity.
-- Step names; laying-window fields; incubation and stage-acceptance requirements; L3 collection time and interval.
-- Within-day start/end order, immediate predecessor order, operations after the target, and the selected weekday-only availability setting.
-- Selected source versus target genotype and estimated offspring-eclosion date.
-- L3 calendar-day relation for a proposed new culture or an existing source.
+**Include workspace data** is enabled initially. The user can include all containers or select individual containers and their source ancestors. The snapshot also includes related temperature records, activity, reminders, egg batches, and cooling plans; laboratory settings, weekly availability, date exceptions, and general reminders supply scheduling context. Genotypes and notes are included, so the composer identifies cloud transmission when a cloud connection is active. A local connection sends requests to the configured local server and has no automatic cloud fallback.
 
-These are local form/date checks, not a scheduling solver, inventory allocation check, protocol interpretation, or biological validation. User-written interval and acceptance text is preserved but not interpreted. Full duration propagation, lay windows across dates, flexible work hours, equipment, selected-cohort anchors, quantity sufficiency, planned versus actual execution, and immutable plan versions belong in the production planner described in [experiment-planner-design.md](experiment-planner-design.md). The prototype deliberately does not expose an Apply plan action because there is no validated solver result or plan-application backend.
+The backend reads one consistent snapshot without reconciling or changing laboratory records. Labels and notes are passed as record data, not as instructions. The model receives explicit distinctions between physical operations and planned work, observed stages and estimates, parental genotypes and selected-genotype targets, and container D0 and egg-laying anchors. Unknown quantities, stages, or selection results are not supplied as fabricated facts.
 
-## Production assistant behavior
+Each response shows counts for the data actually included. Oversized snapshots produce a request error and require fewer selected containers or disabling workspace data; individual records are not silently truncated. Selecting a container includes its ancestors, rather than unrelated descendants or siblings. A missing selected container produces a correction message and can be cleared from the selection.
 
-The assistant should receive the current draft and a versioned snapshot of relevant containers, batches, source relationships, observations, forecasts, and availability. Requested changes should arrive as structured proposals, each attached to a concrete step or material choice. A proposal needs a visible before/after change and, when useful, a directly accessible supporting record or reference. Accepting a proposal changes the draft; applying reviewed, validated work is a separate production operation.
+Changing the selected scope or turning workspace data on/off clears the existing conversation while preserving the unsent message. This prevents earlier record excerpts in model replies from leaking into a narrower data selection. Changing the active connection also starts a new conversation. **New conversation** clears the transcript without discarding an unsent message.
 
-If a necessary duration, stage criterion, material quantity, or source fact is missing, the assistant should ask for that specific input against the relevant step. It should not fill uncertainty with protocol-like prose or claim a source's target cross genotype proves selected offspring genotype. Reference links belong with claims or timing rules that use them, not as permanent instructional paragraphs in unrelated forms.
+Conversation state is held only in page memory. Navigation within the app retains it; reloading or closing the browser tab loses it. It is not part of the SQLite database, backup, or browser storage. The next request contains at most 12 previous messages in complete user/assistant pairs, within a character budget. When older exchanges are omitted, the interface displays the number still sent. Individual replies are not silently shortened to fit history.
 
-Cloud and local providers share this structured proposal contract and deterministic validation. The provider's endpoint/model/credential configuration belongs in Connection; transport and data-model details belong in documentation. A real connection failure should display a concise actionable error. Manual draft editing remains available when the model is unavailable.
+**Cancel request** stops the UI request and retains the draft. A failure also retains the draft for editing and retry. Sending displays a pending message and loading state without inventing a response. Model text is rendered as text with preserved line breaks, never executable HTML. The API key is a transport credential, not a message or workspace field.
 
-## Implementation notes
+## What the current assistant does
 
-The artifact uses static HTML/CSS and a small vanilla-JavaScript state model. User text is rendered through input values or `textContent`, never inserted as HTML. Content Security Policy disables network connections, forms cannot navigate, and the page has no fetch or storage calls. Controls have native labels or accessible names, visible keyboard focus, and a live region for structural actions. The assistant becomes a dismissible drawer on smaller screens and begins closed there.
+The assistant can discuss a target experiment, identify relevant existing records, ask for missing inputs, and propose an L1 or L3 schedule in conversation. It has no tools for changing containers, reminders, physical-operation records, or experiment plans. It cannot browse or verify sources. No answer is a deterministic feasibility result or a saved execution plan.
 
-Production UI copy should move into the existing English message catalog, with the established locale-registration interface. The prototype has a small message map for repeated validation states but is not a complete localization implementation. Transgenesis is not represented; its later workflow will be authored by the researcher.
+Its domain instructions retain the researcher's rules: virgin collection has one configured culture day and three windows; third-instar collection currently uses the editable calendar D5 preset; transgenesis remains deferred. L1 discussions may follow adults → egg laying → egg batch → Petri dish → stage observation → dissection, reusing suitable existing material. A hatch estimate is not treated as a guaranteed L1 dissection interval. A suggested schedule with missing timing or suitability information remains a draft requiring those inputs.
 
-## Review performed
+Future structured suggestions need a concrete step or material target, editable before/after changes, and deterministic validation before application. The current text response does not implement these features. See [experiment-planner-design.md](experiment-planner-design.md) for the planned workflow and solver model.
 
-The standalone script passed syntax checking. A visible-browser walkthrough checked the initial L1 canvas, switching to L3, D5 setup-date recalculation, a collection date beyond the target with no hour entered, on-demand missing-field feedback, adding/renaming/reordering/removing a custom step, closing/reopening the assistant, and separate cloud/local profile drafts. Saving a connection draft left sending disabled. Reload reset the sample state. The prototype was visually inspected on desktop; smaller-screen CSS has not been tested on a physical mobile device.
+## Backup and restore in the application
+
+**Protocols & settings → Backup & restore** provides both directions. **Download backup** exports a consistent SQLite copy of laboratory records and workspace settings. **Import backup** accepts a Flykeeper database file up to 64 MB, checks it, and compares incoming/current record counts and time zones before replacement.
+
+Typing `RESTORE` confirms replacement of the current workspace, not a merge. The application saves a recovery backup first. Invalid records, unsupported schemas, an expired preview, or a changed current workspace prevent applying the preview. The completed restore refreshes the app and clears in-memory assistant context. **Download recovery backup** retrieves the pre-restore copy, which can be imported through the same flow. AI profiles and API keys are outside the restored database and remain unchanged.
+
+These consequences belong in the import UI because they affect the current action. The former documentation requiring a stopped app and manual file replacement is no longer the normal restore flow.
+
+## Experiment-canvas design reference
+
+Open [assistant-design.html](assistant-design.html) separately to review the proposed experiment editor. It remains one standalone file with fictional example cultures, no network calls, and no laboratory-database writes. Its model connection and assistant controls remain nonfunctional. Page reload resets its sample edits and connection drafts. This is distinct from the connected Assistant in the main application.
+
+The prototype places a target operation, time window, genotype, and quantity above materials and editable steps. For L1, it separates adult selection, egg laying, egg collection, and Petri-dish incubation. The researcher supplies incubation rules and stage-acceptance criteria. Parents/Offspring selection does not imply moving all adults. The target step follows the target fields; steps can be named, added, reordered, or removed.
+
+For L3, a proposed new culture uses the editable D5 relation to infer setup from a collection date. For an existing culture, the prototype exposes the recorded setup and flags a mismatch with that relation. Collection-to-dissection timing remains a separate input. Example dates do not establish an observed biological stage.
+
+**Check draft** shows missing fields and simple local date conflicts: start/end order, immediate predecessor order, work after the target, and an optional weekday-only schedule. These checks do not implement duration propagation, real availability windows, inventory allocation, protocol interpretation, biological validation, planned-versus-actual execution, or immutable plan versions. The prototype has no Apply plan action.
+
+Its JavaScript uses input values or `textContent`, with network access disabled by Content Security Policy. Controls have labels and keyboard focus. The assistant panel becomes a drawer at smaller widths. Its small validation message map is not a full localization implementation; production assistant strings already use the application's English translation catalog.
+
+## Verification scope
+
+The original standalone prototype had a syntax check and visible-browser walkthrough of L1/L3 switching, D5 date calculation, missing fields, step editing, and disconnected profile drafts. That historical walkthrough applies only to the prototype.
+
+The integrated components have passed TypeScript checking and targeted lint. Backend verification uses isolated test databases and controlled provider responses. This document does not claim that a user's live cloud account, installed local model, or current production backup has been exercised; end-to-end application verification is reported separately after it is completed.

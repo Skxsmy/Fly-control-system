@@ -8,6 +8,8 @@
 - Do not move unwanted prose into tooltips or collapsed help merely to retain it. Keep engineering explanations in project documentation.
 - Show a warning when a specific record or attempted action requires attention. Identify the actual issue and available correction. Preserve meaningful destructive-action consequences.
 - Prefer clear labels and units to helper paragraphs. Keep estimated and observed values accurately labeled without repeating general caveats.
+- Preserve concise, useful explanations of what a feature does, what data it affects, how to complete unfamiliar operations, and important timing anchors. The user explicitly rejected blanket removal of all help; backup/export and import/restore need clear scope and consequences.
+- Deliver features through the main application with reachable settings and complete operation paths. A detached prototype does not satisfy a request for an integrated assistant or working API configuration.
 - Do not use UI design skills for this project; the user explicitly requested direct design work.
 
 ## Experimental workflows
