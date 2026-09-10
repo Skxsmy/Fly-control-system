@@ -971,9 +971,10 @@ def egg_batch_action(bid: str, model: EggBatchAction):
                     save_event(db, event)
         return batch
 
-from . import ai_assistant, workspace_restore
+from . import ai_assistant, ai_models, workspace_restore
 
 ai_assistant.install_routes(app, sys.modules[__name__])
+ai_models.install_routes(app, sys.modules[__name__])
 app.include_router(workspace_restore.make_router(sys.modules[__name__]))
 
 FRONTEND = ROOT / "frontend" / "dist" / "local"

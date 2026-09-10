@@ -6,11 +6,14 @@ environment variables. No model response is executed or written to lab records.
 """
 import base64
 import ctypes
+import errno
 import hashlib
 import ipaddress
 import json
 import os
 import secrets
+import socket
+import ssl
 import sqlite3
 import tempfile
 import threading
@@ -385,6 +388,28 @@ def http_client():
     return httpx.Client(timeout=httpx.Timeout(45, connect=10), follow_redirects=False, trust_env=False)
 
 
+def classify_transport_error(error):
+    """Expose actionable causes without returning provider text or credentials."""
+    chain, seen = [], set()
+    current = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    if any(isinstance(item, PermissionError) or getattr(item, 'winerror', None) == 10013 for item in chain):
+        return 'ai_network_permission_denied'
+    if any(isinstance(item, httpx.ProxyError) for item in chain):
+        return 'ai_proxy_failed'
+    if any(isinstance(item, ssl.SSLError) for item in chain):
+        return 'ai_tls_failed'
+    if any(isinstance(item, socket.gaierror) for item in chain):
+        return 'ai_dns_failed'
+    # SSL error numbers overlap OS errno values; inspect their types first.
+    if any(getattr(item, 'errno', None) in (errno.EACCES, errno.EPERM, 10013) for item in chain):
+        return 'ai_network_permission_denied'
+    return 'ai_connection_failed'
+
+
 def complete(profile, key, messages):
     headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
     if key:
@@ -397,6 +422,8 @@ def complete(profile, key, messages):
                     raise HTTPException(502, 'ai_redirect_rejected')
                 if response.status_code in (401, 403):
                     raise HTTPException(502, 'ai_auth_failed')
+                if response.status_code == 402:
+                    raise HTTPException(502, 'ai_insufficient_balance')
                 if response.status_code == 429:
                     raise HTTPException(502, 'ai_rate_limited')
                 if response.status_code == 404:
@@ -412,8 +439,8 @@ def complete(profile, key, messages):
                 raw = json.loads(b''.join(chunks))
     except httpx.TimeoutException:
         raise HTTPException(504, 'ai_timeout') from None
-    except httpx.HTTPError:
-        raise HTTPException(502, 'ai_connection_failed') from None
+    except httpx.HTTPError as error:
+        raise HTTPException(502, classify_transport_error(error)) from None
     except (ValueError, UnicodeError):
         raise HTTPException(502, 'ai_invalid_response') from None
     try:

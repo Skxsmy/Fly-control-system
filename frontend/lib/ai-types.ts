@@ -18,6 +18,15 @@ export type AISettingsUpdate = {
   active_profile: AIProfileName;
   profiles: Partial<Record<AIProfileName, {endpoint: string; model: string; api_key?: string | null}>>;
 };
+export type AIModelsRequest = {profile: AIProfileName; endpoint: string; api_key?: string | null};
+export type AIModelsResponse = {
+  status: 'reachable';
+  profile: AIProfileName;
+  endpoint: string;
+  checked_at: string;
+  models: {id: string}[];
+  truncated: boolean;
+};
 export type AIHistoryMessage = {role: 'user' | 'assistant'; content: string};
 export type AIContext = {
   included: boolean;

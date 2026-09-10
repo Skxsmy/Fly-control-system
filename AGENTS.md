@@ -25,3 +25,4 @@
 
 - Test with an isolated database. Never insert demonstration or test cultures into the personal workspace.
 - Preserve existing form behavior, accessibility, and validation when editing UI copy.
+- Start the persistent application under the normal desktop user's Windows account when verifying cloud connections. A process launched under the offline coding sandbox cannot access the provider, and its DPAPI credentials belong to the sandbox account. Use isolated sandbox processes only for local tests; never leave that process as the user's running application. Preserve credentials when correcting an account mismatch and never write plaintext keys to files or logs.
