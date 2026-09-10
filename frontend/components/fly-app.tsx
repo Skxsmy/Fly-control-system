@@ -1,0 +1,168 @@
+'use client';
+import { useCallback, useEffect, useState } from 'react';
+import { Activity, ArrowDownToLine, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronLeft, ChevronRight, CircleCheck, Clock3, FlaskConical, LayoutDashboard, Leaf, ListFilter, MoreHorizontal, Plus, Search, Settings2, Snowflake, Sun, Thermometer, TriangleAlert, X } from 'lucide-react';
+import { Button } from './ui/button';
+import { ActionForm, AvailabilityForm, ContainerForm, EggBatchForm, EggActionForm, Modal, Planner, ReminderForm, SettingsPage, windowsText } from './fly-forms';
+import { api } from '@/lib/api';
+import { isOverdue, occursOnDay, isTodayWork } from '@/lib/task-timing';
+import { fmtDate, fmtNumber, fmtTime, setLocale, t } from '@/lib/i18n';
+import type { AppState, Culture, Task, EggBatch } from '@/lib/types';
+
+type Page = 'today' | 'containers' | 'calendar' | 'settings';
+type DialogState = {kind: 'container'; source?: Culture; eggBatch?: EggBatch; mode?: 'transfer' | 'generation' | 'edit'} | {kind: 'action'; culture: Culture; action: string; event?: Task} | {kind: 'reminder'; event?: Task; cultureId?: string; date?: string; batch?: EggBatch} | {kind: 'availability'; date: string} | {kind: 'planner'; culture: Culture} | {kind: 'egg-batch'; culture: Culture} | {kind: 'egg-action'; batch: EggBatch; action: 'collect' | 'use' | 'cancel'};
+const genotype = (c: Culture) => ['cross', 'egg_laying'].includes(c.purpose) ? `${c.female_genotype} ♀ × ${c.male_genotype} ♂` : c.genotype;
+const taskTitle = (e: Task) => e.title || `${t(`task.${e.kind}`)}${e.batch_label ? ` · ${e.batch_label}` : ''}`;
+const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const nextDay = (date: string, days: number) => {const value = new Date(date + 'T12:00'); value.setDate(value.getDate() + days); return isoDay(value);};
+function dayWindows(state: AppState, day: string) {return state.availability.find(x => x.date === day)?.windows ?? state.settings.weekly[String((new Date(day + 'T12:00').getDay() + 6) % 7)];}
+
+export default function FlyApp() {
+  const [stopped, setStopped] = useState(false);
+  const [state, setState] = useState<AppState | null>(null); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
+  const [page, setPage] = useState<Page>('today'); const [search, setSearch] = useState(''); const [selected, setSelected] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<DialogState | null>(null); const [busy, setBusy] = useState(false);
+  const refresh = useCallback(async () => {const value = await api<AppState>('/state'); setLocale(value.settings.locale); setState(value); setError('');}, []);
+  useEffect(() => {if (stopped) return; const load = () => {void refresh().catch(e => setError(e.message));}; load(); const interval = setInterval(load, 60000); const visible = () => {if (document.visibilityState === 'visible') load();}; window.addEventListener('focus', load); document.addEventListener('visibilitychange', visible); return () => {clearInterval(interval); window.removeEventListener('focus', load); document.removeEventListener('visibilitychange', visible);};}, [refresh, stopped]);
+  useEffect(() => {if (notice) {const id = setTimeout(() => setNotice(''), 3500); return () => clearTimeout(id);}}, [notice]);
+  const saved = async (id?: string) => {await refresh(); setNotice(t('common.saved')); if (id) {setSelected(id); setPage('containers');}};
+  async function update(e: Task, payload: unknown) {if (busy) return; setBusy(true); try {await api(`/events/${e.id}`, 'PATCH', payload); await saved();} catch(e) {setError((e as Error).message);} finally {setBusy(false);}}
+  function perform(e: Task) {
+    const c = state?.containers.find(c => c.id === e.container_id);
+    if (e.kind === 'egg_collect') {const batch = state?.egg_batches.find(b => b.id === e.egg_batch_id); if (batch) return setDialog({kind:'egg-action', batch, action:'collect'});}
+    if (c && e.kind === 'transfer') return setDialog({kind: 'container', source: c, mode: 'transfer'});
+    if (c && e.kind === 'stock') return setDialog({kind: 'container', source: c, mode: 'generation'});
+    if (c && ['collect', 'tissue', 'cold', 'warm', 'first_instar'].includes(e.kind)) return setDialog({kind: 'action', culture: c, action: e.kind, event: e});
+    void update(e, {status: 'done'});
+  }
+  useEffect(() => {
+    const context = (document as Document & {modelContext?: {registerTool: (tool: unknown, options: {signal: AbortSignal}) => void | Promise<void>}}).modelContext;
+    if (!context?.registerTool) return;
+    const lifecycle = new AbortController();
+    void Promise.resolve(context.registerTool({name: 'list_fly_containers', description: 'Read the local container records and refresh the visible workspace.', inputSchema: {type: 'object', properties: {}, additionalProperties: false}, annotations: {readOnlyHint: true, untrustedContentHint: true}, execute: async (input: unknown) => {
+      if (!input || typeof input !== 'object' || Object.keys(input).length) throw new Error('Expected an empty object');
+      const value = await api<AppState>('/state'); setState(value); return value.containers.map(c => ({id: c.id, label: c.label, genotype: genotype(c), status: c.status, temperature: c.temperature}));
+    }}, {signal: lifecycle.signal})).catch(() => {});
+    return () => lifecycle.abort();
+  }, []);
+
+  const pending = state?.events.filter(e => e.status === 'pending') || [];
+  const today = state?.now.slice(0, 10) || isoDay(new Date());
+  const culture = state?.containers.find(c => c.id === selected);
+  const nav = [{key: 'today', icon: LayoutDashboard}, {key: 'containers', icon: FlaskConical}, {key: 'calendar', icon: CalendarDays}, {key: 'settings', icon: Settings2}] as const;
+  const taskProps = {containers: state?.containers || [], now: state?.now || '', perform, move: (event: Task) => setDialog({kind: 'reminder', event}), update, select: (id: string) => setSelected(id), busy};
+  if (stopped) return <main className="loading"><h1>{t('runtime.stopped')}</h1><p>{t('runtime.restart')}</p></main>;
+  return <div className="fly-app"><a className="skip-link" href="#main">{t('nav.workspace')}</a>
+    <aside className="sidebar"><button className="brand" onClick={() => setPage('today')}><span className="brand-icon"><Leaf size={24}/></span><span>{t('app.name')}<small>{t('nav.subtitle')}</small></span></button>
+      <div className="nav-label">{t('nav.workspace')}</div><nav>{nav.map(({key, icon: Icon}) => <button key={key} className={`nav-item ${page === key ? 'selected' : ''}`} aria-current={page === key ? 'page' : undefined} onClick={() => {setPage(key); setSelected(null);}}><Icon size={19}/><span>{t(`nav.${key}`)}</span>{key === 'today' && pending.filter(e => e.due.startsWith(today)).length > 0 && <span className="nav-count">{pending.filter(e => e.due.startsWith(today)).length}</span>}</button>)}</nav>
+      <div className="sidebar-bottom"><div className="local-dot"/><div>{t('app.workspace')}<small>{t('app.local')}</small></div><ArrowDownToLine size={16}/></div>
+    </aside>
+    <div className="workspace"><header className="topbar"><div className="breadcrumb">{t('app.workspace')}<ChevronRight size={14}/><strong>{t(`nav.${page}`)}</strong></div><div className="topbar-right"><span className="zone"><Clock3 size={15}/>{state?.settings.timezone}</span><span className="avatar">FK</span></div></header>
+      <main id="main">
+        {error && <div className="error-banner" role="alert"><TriangleAlert size={18}/><span>{error}</span><Button variant="outline" onClick={() => void refresh().catch(e => setError(e.message))}>{t('common.retry')}</Button></div>}
+        {!state ? <div className="loading"><span className="spinner"/>{t('common.loading')}</div> : <>
+          <div className="page-heading"><div><div className="eyebrow">{page === 'today' ? fmtDate(today, {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'}) : t(`nav.${page}`)}</div><h1>{t(page === 'today' ? 'today.title' : page === 'containers' ? 'container.title' : `${page}.title`)}</h1><p>{t(page === 'today' ? 'today.subtitle' : page === 'containers' ? 'container.subtitle' : `${page}.subtitle`)}</p></div>
+            {page !== 'settings' && <Button className="primary-create" onClick={() => setDialog({kind: 'container'})}><Plus size={18}/>{t('common.newContainer')}</Button>}
+          </div>
+          {page === 'today' && <>
+            <div className="metrics">{[{label: 'today.active', value: state.containers.filter(c => c.status === 'active').length, icon: FlaskConical, tone: 'green'}, {label: 'today.due', value: pending.filter(e => e.due.startsWith(today)).length, icon: ListFilter, tone: 'neutral'}, {label: 'today.critical', value: pending.filter(e => e.due.startsWith(today) && e.critical).length, icon: Activity, tone: 'amber'}, {label: 'today.cold', value: state.containers.filter(c => c.status === 'active' && c.temperature === 18).length, icon: Snowflake, tone: 'blue'}].map(({label, value, icon: Icon, tone}) => <div className="metric" key={label}><span className={`metric-icon ${tone}`}><Icon size={20}/></span><div><span>{t(label)}</span><strong>{fmtNumber(value)}</strong></div></div>)}</div>
+            {state.containers.length === 0 ? <section className="welcome panel"><div className="culture-symbol"><FlaskConical size={38}/><Leaf size={21}/></div><h2>{t('today.welcome')}</h2><p>{t('today.welcomeHint')}</p><Button onClick={() => setDialog({kind: 'container'})}><Plus size={18}/>{t('common.newContainer')}</Button></section> : <div className="today-layout"><div>
+              {pending.some(e => isOverdue(e, state.now)) && <section className="panel overdue-panel"><div className="panel-title"><h2><TriangleAlert size={18}/>{t('today.overdue')}</h2><span className="count-badge">{pending.filter(e => isOverdue(e, state.now)).length}</span></div><TaskList {...taskProps} events={pending.filter(e => isOverdue(e, state.now))} showDate/></section>}
+              <section className="panel"><div className="panel-title"><h2>{t('today.queue')}<span className="count-badge">{pending.filter(e => isTodayWork(e, state.now)).length}</span></h2><Button variant="ghost" onClick={() => setDialog({kind: 'reminder'})}><Plus size={16}/>{t('common.newTask')}</Button></div>
+                <TaskList {...taskProps} events={pending.filter(e => isTodayWork(e, state.now))} empty={<Empty title={t('today.empty')} description={t('today.emptyHint')}/>}/>
+              </section>
+              <section className="panel"><div className="panel-title"><h2>{t('today.upcoming')}</h2><span className="subtle">{t('today.nextDays')}</span></div><TaskList {...taskProps} events={pending.filter(e => e.due.slice(0, 10) > today && e.due.slice(0, 10) <= nextDay(today, 7)).slice(0, 12)} empty={<p className="empty-line">{t('today.noUpcoming')}</p>} showDate/></section>
+            </div><aside className="today-aside"><section className="panel availability-card"><span className="eyebrow"><Sun size={15}/>{t('today.available')}</span><h3>{fmtDate(today, {weekday: 'long'})}</h3><p>{windowsText(dayWindows(state, today)) || t('today.rest')}</p><Button variant="outline" onClick={() => setDialog({kind: 'availability', date: today})}>{t('calendar.availability')}<ArrowUpRight size={16}/></Button></section>
+              <section className="panel conflict-panel"><div className="panel-title"><h2><TriangleAlert size={18}/>{t('today.conflicts')}</h2></div><p className="subtle">{t('today.conflictHint')}</p>
+                {pending.filter(e => e.conflict && e.critical && e.due.slice(0, 10) >= today).slice(0, 5).map(e => <button className="conflict-item" key={e.id} onClick={() => {setPage('calendar'); setDialog({kind: 'reminder', event: e});}}><span><b>{state.containers.find(c => c.id === e.container_id)?.label || t('task.general')}</b><small>{taskTitle(e)}</small></span><span>{fmtDate(e.due)}<ChevronRight size={14}/></span></button>)}
+                {!pending.some(e => e.conflict && e.critical && e.due.slice(0, 10) >= today) && <p className="empty-line">{t('today.noConflicts')}</p>}
+                <Button variant="ghost" onClick={() => setPage('calendar')}>{t('today.reviewCalendar')}<ArrowRight size={16}/></Button></section>
+              <p className="footnote"><Clock3 size={15}/>{t('today.openOnly')}</p></aside></div>}
+          </>}
+          {page === 'containers' && <Containers state={state} search={search} setSearch={setSearch} select={setSelected} create={() => setDialog({kind: 'container'})}/>}
+          {page === 'calendar' && <Calendar state={state} taskProps={taskProps} availability={date => setDialog({kind: 'availability', date})} reminder={date => setDialog({kind: 'reminder', date})}/>}
+          {page === 'settings' && <SettingsPage key={JSON.stringify(state.settings)} settings={state.settings} saved={saved} onShutdown={() => setStopped(true)}/>}
+        </>}
+      </main><footer className="workspace-footer"><span>{t('app.name')}</span><span>{t('app.local')}</span></footer>
+    </div>
+    {notice && <output className="toast"><CircleCheck size={18}/>{notice}<button aria-label={t('common.dismiss')} onClick={() => setNotice('')}><X size={15}/></button></output>}
+    {culture && state && !dialog && <Modal title={culture.label} description={genotype(culture)} close={() => setSelected(null)} wide>
+      <CultureDetails culture={culture} state={state} taskProps={taskProps} dialog={setDialog} select={setSelected}/>
+    </Modal>}
+    {dialog && state && <>
+      {dialog.kind === 'container' && <ContainerForm state={state} source={dialog.source} mode={dialog.mode} eggBatch={dialog.eggBatch} close={() => setDialog(null)} saved={saved}/>}
+      {dialog.kind === 'action' && <ActionForm culture={dialog.culture} action={dialog.action} event={dialog.event} now={state.now} close={() => setDialog(null)} saved={saved}/>}
+      {dialog.kind === 'reminder' && <ReminderForm state={state} event={dialog.event} cultureId={dialog.cultureId} date={dialog.date} batch={dialog.batch} close={() => setDialog(null)} saved={saved}/>}
+      {dialog.kind === 'availability' && <AvailabilityForm state={state} day={dialog.date} close={() => setDialog(null)} saved={saved}/>}
+      {dialog.kind === 'egg-batch' && <EggBatchForm culture={dialog.culture} now={state.now} close={() => setDialog(null)} saved={saved}/>}
+      {dialog.kind === 'egg-action' && <EggActionForm batch={dialog.batch} action={dialog.action} now={state.now} close={() => setDialog(null)} saved={saved}/>}
+      {dialog.kind === 'planner' && <Planner culture={dialog.culture} close={() => setDialog(null)} saved={saved}/>}
+    </>}
+  </div>;
+}
+
+function Empty({title, description}: {title: string; description: string}) {return <div className="empty"><span className="empty-icon"><Check size={26}/></span><h3>{title}</h3><p>{description}</p></div>;}
+type TaskProps = {containers: Culture[]; now: string; perform: (e: Task) => void; move: (e: Task) => void; update: (e: Task, body: unknown) => void; select: (id: string) => void; busy: boolean};
+function TaskList({events, containers, perform, move, update, select, busy, empty, showDate}: TaskProps & {events: Task[]; empty?: React.ReactNode; showDate?: boolean}) {
+  if (!events.length) return empty || <p className="empty-line">{t('container.noReminders')}</p>;
+  return <div className="task-list">{events.map(e => {const c = containers.find(c => c.id === e.container_id); const spansDays = e.due.slice(0, 10) !== e.end.slice(0, 10); return <div className={`task-row ${e.critical ? 'critical' : ''} ${e.status !== 'pending' ? 'resolved' : ''}`} key={e.id}>
+    <div className="task-time">{(showDate || spansDays) && <span>{fmtDate(e.due)}</span>}<strong>{fmtTime(e.due)}</strong>{e.end !== e.due && <small>{spansDays ? `${fmtDate(e.end)} · ` : ''}{fmtTime(e.end)}</small>}</div>
+    <div className="task-body"><div className="task-line"><strong>{taskTitle(e)}</strong>{e.critical && <span className="pill amber">{t('task.critical')}</span>}{e.timing_review && <span className="pill amber">{t('eggs.reviewBadge')}</span>}{e.pinned && <span className="pin-dot" title={t('task.pinned')}>•</span>}</div><div className="task-meta">{c ? <button onClick={() => select(c.id)} className="container-link">{c.label}</button> : <span>{t('task.general')}</span>}{c && <span className="genotype-preview">{genotype(c)}</span>}{e.status !== 'pending' && <span>{t(`task.${e.status}`)}</span>}{e.conflict && e.status === 'pending' && <TriangleAlert size={14} className="warning-icon" aria-label={t('task.conflict')}/>}</div></div>
+    <div className="task-controls">{e.status === 'pending' && <Button variant="outline" size="sm" disabled={busy || c?.status === 'planned'} title={t('task.markDone')} onClick={() => perform(e)}><Check size={15}/><span>{t('common.done')}</span></Button>}
+      <details className="task-menu"><summary aria-label={t('container.operations')}><MoreHorizontal size={20}/></summary><div className="menu-items"><button disabled={busy} onClick={() => move(e)}>{t('task.move')}</button>{e.status === 'pending' && <><button disabled={busy} onClick={() => update(e, {status: 'skipped'})}>{t('task.skip')}</button><button disabled={busy} onClick={() => update(e, {status: 'disabled'})}>{t('task.disable')}</button></>}<button disabled={busy} onClick={() => update(e, {restore: true})}>{t('task.restore')}</button></div></details>
+    </div>
+  </div>;})}</div>;
+}
+
+function Containers({state, search, setSearch, select, create}: {state: AppState; search: string; setSearch: (v: string) => void; select: (v: string) => void; create: () => void}) {
+  const [status, setStatus] = useState('active'); const [purpose, setPurpose] = useState('all'); const [grouped, setGrouped] = useState(false);
+  const rows = state.containers.filter(c => (status === 'all' || (status === 'active' ? ['active', 'planned'].includes(c.status) : ['completed', 'discarded'].includes(c.status))) && (purpose === 'all' || c.purpose === purpose) && `${c.label} ${genotype(c)} ${c.notes}`.toLowerCase().includes(search.toLowerCase()));
+  if (grouped) rows.sort((a, b) => genotype(a).localeCompare(genotype(b)));
+  return <section className="panel containers-panel"><div className="table-toolbar"><label className="search"><Search size={18}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('common.search')} aria-label={t('common.search')}/></label><select aria-label={t('container.status')} value={status} onChange={e => setStatus(e.target.value)}><option value="active">{t('container.active')}</option><option value="archive">{t('container.archive')}</option><option value="all">{t('container.all')}</option></select><select aria-label={t('container.purpose')} value={purpose} onChange={e => setPurpose(e.target.value)}><option value="all">{t('common.all')}</option>{['stock', 'cross', 'virgin', 'egg_laying', 'dissection', 'imaging', 'other'].map(x => <option key={x} value={x}>{t(`purpose.${x}`)}</option>)}</select><label className="check-label"><input type="checkbox" checked={grouped} onChange={e => setGrouped(e.target.checked)}/>{t('container.group')}</label></div>
+    <div className="table-scroll"><table><thead><tr>{['id', 'genotype', 'age', 'temperature', 'transfers', 'next'].map(x => <th key={x}>{t(`container.${x}`)}</th>)}</tr></thead><tbody>{rows.map((c, index) => {
+      const next = state.events.find(e => e.container_id === c.id && e.status === 'pending');
+      return <ContainerRows key={c.id} culture={c} next={next} select={select} group={grouped && (index === 0 || genotype(rows[index - 1]) !== genotype(c)) ? genotype(c) : undefined}/>;
+    })}</tbody></table></div>{!rows.length && <div className="empty"><FlaskConical size={30}/><h3>{t('common.noResults')}</h3><Button variant="outline" onClick={create}>{t('common.newContainer')}</Button></div>}
+    <div className="table-footer">{t('container.records', {count: rows.length})}</div></section>;
+}
+function ContainerRows({culture: c, next, select, group}: {culture: Culture; next?: Task; select: (id: string) => void; group?: string}) {return <>{group && <tr className="group-row"><th colSpan={6}>{group}</th></tr>}<tr>
+  <td><button className="id-button" aria-label={c.label} onClick={() => select(c.id)}><span className={`tube-icon ${c.kind}`}><FlaskConical size={19}/></span><span><strong>{c.label}</strong><small>{t(`kind.${c.kind}`)} · {t(`status.${c.status}`)}</small></span></button></td>
+  <td className="genotype-cell"><span>{genotype(c)}</span><small>{t(`purpose.${c.purpose}`)}</small></td><td><strong className="mono">{c.kind === 'petri_dish' ? t('eggs.ageShort', {min:fmtNumber(c.egg_age_hours?.[0] || 0), max:fmtNumber(c.egg_age_hours?.[1] || 0)}) : t('container.day', {day: c.calendar_day})}</strong><small>{fmtDate(c.setup_date)}</small></td>
+  <td><span className={`pill ${c.temperature === 18 ? 'blue' : 'neutral'}`}>{c.temperature === 18 ? <Snowflake size={13}/> : <Thermometer size={13}/>} {c.temperature}°C</span></td><td>{c.kind === 'petri_dish' ? '—' : <><span className="mono">{c.transfer_index} / {c.template.max_transfers}</span><small>{t(`parents.${c.parents}`)}</small></>}</td><td>{next ? <><span className="next-task">{taskTitle(next)}</span><small className={next.conflict ? 'warning-text' : ''}>{fmtDate(next.due)} · {fmtTime(next.due)}</small></> : <span className="subtle">—</span>}</td>
+</tr></>;}
+
+function CultureDetails({culture: c, state, taskProps, dialog, select}: {culture: Culture; state: AppState; taskProps: TaskProps; dialog: (d: DialogState) => void; select: (id: string) => void}) {
+  const [history, setHistory] = useState(false);
+  const hourly = ['petri_dish','egg_laying'].includes(c.kind);
+  const batch = state.egg_batches.find(b => b.id === c.egg_batch_id);
+  const source = state.containers.find(x => x.id === c.source_id);
+  return <div className="culture-detail"><div className="detail-badges"><span className="pill green">{t(`status.${c.status}`)}</span><span className="pill neutral">{t(`purpose.${c.purpose}`)}</span><span className={`pill ${c.temperature === 18 ? 'blue' : 'neutral'}`}>{c.temperature}°C</span><Button variant="ghost" onClick={() => dialog({kind: 'container', source: c, mode: 'edit'})}><Settings2 size={16}/>{t('common.edit')}</Button></div>
+    <div className="detail-clock"><div><span>{t(c.kind === 'petri_dish' ? 'eggs.ageLabel' : 'container.age')}</span><strong>{c.kind === 'petri_dish' ? t('eggs.ageShort', {min:fmtNumber(c.egg_age_hours?.[0] || 0), max:fmtNumber(c.egg_age_hours?.[1] || 0)}) : t('container.day', {day: c.calendar_day})}</strong>{!hourly && <small>{t('container.effective', {age: fmtNumber(c.effective_age)})}</small>}</div>{c.kind !== 'petri_dish' && <div><span>{t('container.transfers')}</span><strong>{c.transfer_index}<small> / {c.template.max_transfers}</small></strong><small>{t(`parents.${c.parents}`)}</small></div>}</div>
+    {!c.setup_time && <p className="subtle">{t('container.dateOnly')}</p>}
+    <dl className="detail-facts"><div><dt>{t(c.kind === 'petri_dish' ? 'eggs.dishSetup' : 'container.setup')}</dt><dd>{fmtDate(c.setup_date, {year: 'numeric', month: 'short', day: 'numeric'})}{c.setup_time ? ` · ${c.setup_time}` : ''}</dd></div><div><dt>{t('container.stage')}</dt><dd>{t(`stage.${c.stage}`)}</dd></div><div><dt>{t('temperature.policy')}</dt><dd>{t(`temperature.${c.temperature_policy}`)}</dd></div>{source && <div><dt>{t('container.source')}</dt><dd><button className="text-link" onClick={() => select(source.id)}>{source.label}</button></dd></div>}</dl>
+    {c.notes && <p className="culture-notes">{c.notes}</p>}
+    {c.kind === 'petri_dish' && c.incubation_window && <section className={`clock-panel ${c.incubation_window.review ? 'warning' : ''}`}><h3>{t('eggs.incubation')}</h3><p>{fmtDate(c.incubation_window.start)} · {fmtTime(c.incubation_window.start)} → {fmtDate(c.incubation_window.end)} · {fmtTime(c.incubation_window.end)}</p><p>{t('eggs.ageRange', {min:fmtNumber(c.egg_age_hours?.[0] || 0), max:fmtNumber(c.egg_age_hours?.[1] || 0)})}</p>{batch && <small>{t('eggs.source')}: {batch.label}</small>}<small>{t(c.incubation_window.review ? 'eggs.temperatureReview' : 'eggs.estimateHint')}</small></section>}
+    {hourly && c.status === 'active' && <section><h3>{t('container.operations')}</h3><div className="operation-grid">{(c.kind === 'petri_dish' ? ['first_instar','dissect','image'] : ['remove']).map(action => <Button key={action} variant="outline" disabled={action === 'remove' && c.parents !== 'present'} onClick={() => dialog({kind:'action', culture:c, action})}>{t(`action.${action}`)}</Button>)}<Button variant="outline" disabled={c.temperature === 25 && c.temperature_policy === 'forbidden'} onClick={() => dialog({kind:'action', culture:c, action:c.temperature === 18 ? 'warm':'cold'})}>{t(c.temperature === 18 ? 'action.warm':'action.cold')}</Button></div></section>}
+    {c.kind === 'egg_laying' && <section><div className="panel-title"><h3>{t('eggs.batches')}</h3><Button disabled={c.status !== 'active' || c.parents !== 'present'} onClick={() => dialog({kind:'egg-batch',culture:c})}>{t('eggs.new')}</Button></div><p className="subtle">{t('eggs.batchHint')}</p>{state.egg_batches.filter(b => b.source_id === c.id).map(b => <div className="egg-batch" key={b.id}><h4>{b.label} <span className="pill neutral">{t(`eggs.status.${b.status}`)}</span></h4><p>{fmtDate(b.lay_start)} · {fmtTime(b.lay_start)} → {fmtDate(b.lay_end)} · {fmtTime(b.lay_end)} · {b.temperature}°C</p><p className="subtle">{b.genotype}</p>{b.notes && <p>{b.notes}</p>}<div className="operation-grid">{b.status === 'planned' && <Button onClick={() => dialog({kind:'egg-action',batch:b,action:'collect'})}>{t('eggs.collect')}</Button>}{b.status === 'collected' && <><Button onClick={() => dialog({kind:'container',eggBatch:b})}>{t('eggs.prepare')}</Button><Button variant="outline" onClick={() => dialog({kind:'egg-action',batch:b,action:'use'})}>{t('eggs.use')}</Button><Button variant="outline" disabled={c.status !== 'active'} onClick={() => dialog({kind:'reminder',batch:b})}>{t('common.newTask')}</Button></>}{b.status === 'planned' && <Button variant="outline" onClick={() => dialog({kind:'egg-action',batch:b,action:'cancel'})}>{t('eggs.cancel')}</Button>}</div>{state.containers.filter(d => d.egg_batch_id === b.id).map(d => <p key={d.id}><button className="text-link" onClick={() => select(d.id)}>{d.label}</button> · {t(`purpose.${d.purpose}`)}</p>)}{b.uses.map(u => <p key={u.id}>{fmtDate(u.at)} · {fmtTime(u.at)} — {t(`purpose.${u.purpose}`)}{u.notes ? ` · ${u.notes}` : ''}</p>)}</div>)}</section>}
+    {c.status === 'active' && !hourly && <section><h3>{t('container.operations')}</h3><div className="operation-grid"><Button variant="outline" disabled={c.parents !== 'present' || c.transfer_index >= c.template.max_transfers} onClick={() => dialog({kind: 'container', source: c, mode: 'transfer'})}>{t('container.transfer')}</Button><Button variant="outline" onClick={() => dialog({kind: 'container', source: c, mode: 'generation'})}>{t('container.nextGeneration')}</Button>
+      {['remove', 'clear', 'collect', 'larvae', 'pupae', 'eclosion', ...(c.kind === 'bottle' ? ['tissue'] : []), c.temperature === 18 ? 'warm' : 'cold'].map(action => <Button key={action} variant="outline" disabled={(action === 'remove' && c.parents !== 'present') || (action === 'cold' && c.temperature_policy === 'forbidden')} onClick={() => dialog({kind: 'action', culture: c, action})}>{t(`action.${action}`)}</Button>)}</div>
+      {c.purpose !== 'stock' && <Button className="planner-button" variant="outline" onClick={() => dialog({kind: 'planner', culture: c})}><Snowflake size={16}/>{t('planner.open')}<ArrowRight size={16}/></Button>}</section>}
+    {c.status === 'planned' && <div className="operation-grid"><Button onClick={() => dialog({kind: 'action', culture: c, action: 'activate'})}>{t('action.activate')}</Button>{!hourly && <Button variant="outline" onClick={() => dialog({kind: 'planner', culture: c})}>{t('planner.setupFind')}</Button>}</div>}
+    {!hourly && c.purpose !== 'stock' && <section className={`clock-panel ${c.clock.state === 'elapsed' ? 'warning' : ''}`}><h3><Clock3 size={17}/>{t('clock.title')}</h3><p>{t(`clock.${c.clock.state}`)}</p>{c.clock.last_clear && <small>{t('clock.last')}: {fmtDate(c.clock.last_clear)} · {fmtTime(c.clock.last_clear)}</small>}{c.clock.deadline && <small>{t('clock.deadline')}: {fmtDate(c.clock.deadline)} · {fmtTime(c.clock.deadline)}</small>}<small>{t('clock.hint')}</small></section>}
+    <section><div className="panel-title"><h3>{t('container.reminders')}</h3><Button variant="ghost" disabled={!['active', 'planned'].includes(c.status)} onClick={() => dialog({kind: 'reminder', cultureId: c.id})}><Plus size={16}/>{t('common.add')}</Button></div><label className="check-label subtle"><input type="checkbox" checked={history} onChange={e => setHistory(e.target.checked)}/>{t('task.history')}</label><TaskList {...taskProps} events={state.events.filter(e => e.container_id === c.id && (history || e.status === 'pending'))} showDate/></section>
+    <section><h3>{t('container.timeline')}</h3><div className="activity-list">{[...c.logs].reverse().map(log => <div key={log.id}><span className="activity-dot"/><div><strong>{t(`action.${log.action}`)}</strong>{log.notes && <p>{log.notes}</p>}<small>{fmtDate(log.at)} · {fmtTime(log.at)}</small></div></div>)}</div></section>
+    {c.status === 'active' && <div className="archive-actions"><Button variant="outline" onClick={() => dialog({kind: 'action', culture: c, action: 'complete'})}>{t('action.complete')}</Button><Button variant="destructive" onClick={() => dialog({kind: 'action', culture: c, action: 'discard'})}>{t('action.discard')}</Button></div>}
+  </div>;
+}
+
+function Calendar({state, taskProps, availability, reminder}: {state: AppState; taskProps: TaskProps; availability: (date: string) => void; reminder: (date: string) => void}) {
+  const today = state.now.slice(0, 10); const [selected, setSelected] = useState(today); const [month, setMonth] = useState(today.slice(0, 7));
+  const first = new Date(month + '-01T12:00'); const offset = (first.getDay() + 6) % 7; const start = new Date(first); start.setDate(start.getDate() - offset);
+  const days = Array.from({length: 42}, (_, i) => {const d = new Date(start); d.setDate(d.getDate() + i); return isoDay(d);});
+  function shift(amount: number) {const d = new Date(first); d.setMonth(d.getMonth() + amount); setMonth(isoDay(d).slice(0, 7));}
+  const events = state.events.filter(e => e.status === 'pending');
+  return <div className="calendar-layout"><section className="panel calendar-panel"><div className="calendar-toolbar"><h2>{fmtDate(month + '-01', {month: 'long', year: 'numeric'})}</h2><div><Button variant="outline" onClick={() => {setSelected(today); setMonth(today.slice(0, 7));}}>{t('calendar.today')}</Button><Button variant="ghost" size="icon" aria-label={t('calendar.previous')} onClick={() => shift(-1)}><ChevronLeft size={18}/></Button><Button variant="ghost" size="icon" aria-label={t('calendar.next')} onClick={() => shift(1)}><ChevronRight size={18}/></Button></div></div>
+    <div className="calendar-weekdays">{days.slice(0, 7).map(day => <span key={day}>{fmtDate(day, {weekday: 'short'})}</span>)}</div><div className="calendar-grid">{days.map(day => {const items = events.filter(e => occursOnDay(e, day)); const exception = state.availability.find(x => x.date === day); const off = dayWindows(state, day).length === 0; return <button key={day} className={`calendar-day ${day === selected ? 'selected' : ''} ${day === today ? 'is-today' : ''} ${!day.startsWith(month) ? 'outside' : ''} ${off ? 'off' : ''}`} onClick={() => setSelected(day)} aria-label={`${fmtDate(day, {dateStyle: 'full'})}, ${items.length}`} aria-pressed={day === selected}><div className="day-top"><span className="day-number">{Number(day.slice(-2))}</span>{off && <span className="rest-dot"/>}</div>{exception && <span className="day-exception">{t(`availability.${exception.kind}`)}</span>}<div className="day-events">{items.slice(0, 2).map(e => <span key={e.id} className={`calendar-event ${e.conflict ? 'conflict' : e.critical ? 'critical' : ''}`}><b>{state.containers.find(c => c.id === e.container_id)?.label || fmtTime(e.due)}</b> {taskTitle(e)}</span>)}{items.length > 2 && <small>{t('calendar.more', {count: items.length - 2})}</small>}</div></button>;})}</div>
+    <div className="calendar-legend"><span><i className="legend-green"/>{t('calendar.working')}</span><span><i className="legend-gray"/>{t('calendar.unavailable')}</span><span><i className="legend-amber"/>{t('task.conflict')}</span></div></section>
+    <aside className="panel day-agenda"><span className="eyebrow">{t('calendar.selected')}</span><h2>{fmtDate(selected, {weekday: 'long', month: 'short', day: 'numeric'})}</h2><p className="subtle">{windowsText(dayWindows(state, selected)) || t('today.rest')}</p><Button variant="outline" onClick={() => availability(selected)}>{t('calendar.availability')}</Button><TaskList {...taskProps} events={events.filter(e => occursOnDay(e, selected))} empty={<p className="empty-line">{t('calendar.noTasks')}</p>}/><Button variant="ghost" onClick={() => reminder(selected)}><Plus size={16}/>{t('common.newTask')}</Button></aside>
+  </div>;
+}

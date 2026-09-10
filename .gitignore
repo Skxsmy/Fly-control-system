@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.pytest_cache/
+data/
+backups/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/.wrangler/
+frontend/.vinext/
+frontend/tsconfig.tsbuildinfo
+*.log
+.qa/
+.runtime/
