@@ -1,5 +1,17 @@
 # Reschedule, process control, and egg-workflow review
 
+## Follow-up: egg-laying containers from vials and bottles
+
+The existing application was committed and pushed before this change (checkpoint `fbaddac`). An active vial or bottle now offers **Create egg-laying container**, with explicit original-parent transfer or selected-offspring modes. The source and destination have navigable links. Genotypes, notes, temperature policy, and protocol defaults are inherited where meaningful; cross offspring require entered genotypes. The destination has its own D0 and records its source relationship. Default temperature inheritance uses the source temperature at the entered setup time, including backdated setup.
+
+Original-parent transfer respects presence and the protocol transfer limit, retains cohort identity, increments the count, and completes only a pending parent-transfer task. Selected offspring start a new cohort at count zero and preserve source state/reminders. Validation failures, including duplicate IDs, leave the entire operation unwritten.
+
+Browser review created an existing stock bottle at D10, parents removed, transfer count 2, and observed eclosion. Its new egg-laying container inherited both `w1118` genotypes and notes, while starting at D0/count 0. A cross vial tested both modes: offspring genotype fields stayed blank until entered; switching to original parents copied the parental cross. Saving the transfer produced count 2 from source count 1, preserved the source D2 development tasks, and exposed both source/destination links. These inputs used only `.qa/eggs-review.db`.
+
+Seventeen added backend cases cover inheritance, cross-offspring validation, both container types, historical temperature selection, invalid dates, absent parents, transfer limits, duplicate-label rollback, inactive sources, and the full source → egg-laying container → egg batch → dish chain. Advancing the isolated clock confirms a 21–25 h egg-age range and the expected hatch window. Total: **79 backend tests and 6 frontend tests pass**, plus TypeScript checking, application component/lib lint, and the local build. Existing unused scaffold lint limitations remain as documented below.
+
+Partial original-parent transfers, multi-source mating, and automatic offspring genotype prediction remain outside this shortcut.
+
 ## Results
 
 - A single reschedule does not create a second event. The existing event ID is retained across repeated state refreshes.

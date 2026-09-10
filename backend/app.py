@@ -400,6 +400,71 @@ def transfer(cid: str, model: TransferInput):
         reconcile(db, c)
         return child
 
+class EggLayingFromInput(BaseModel):
+    cohort_mode: Literal['transfer', 'generation']
+    label: str = Field('', max_length=80)
+    setup_date: date
+    setup_time: str | None = None
+    female_genotype: str | None = Field(None, max_length=1000)
+    male_genotype: str | None = Field(None, max_length=1000)
+    initial_temperature: Literal[18, 25] | None = None
+    temperature_policy: Literal['allowed', 'forbidden'] | None = None
+    notes: str | None = Field(None, max_length=10000)
+
+    @field_validator('setup_time')
+    @classmethod
+    def valid_time(cls, value):
+        return ContainerInput.valid_time(value)
+
+
+@app.post('/api/containers/{cid}/egg-laying')
+def egg_laying_from_container(cid: str, model: EggLayingFromInput):
+    with database() as db:
+        source = get_container(db, cid)
+        if source['kind'] not in ('vial', 'bottle'):
+            raise HTTPException(409, 'egg_laying_source_required')
+        if source['status'] != 'active':
+            raise HTTPException(409, 'container_inactive')
+        at = parse(model.setup_date.isoformat() + 'T' + (model.setup_time or '00:00'))
+        if at < start_of(source) or at > now_of(db):
+            raise HTTPException(422, 'invalid_action_time')
+        same = model.cohort_mode == 'transfer'
+        if same and (source['parents'] != 'present' or source['transfer_index'] >= source['template']['max_transfers']):
+            raise HTTPException(409, 'transfer_unavailable')
+        # Cross offspring require an explicit genotype; parental strings are not a prediction.
+        defaults = (source['female_genotype'], source['male_genotype']) if same and source['purpose'] == 'cross' else (
+            ('', '') if source['purpose'] == 'cross' else (source['genotype'], source['genotype']))
+        female = model.female_genotype if model.female_genotype is not None else defaults[0]
+        male = model.male_genotype if model.male_genotype is not None else defaults[1]
+        if not female.strip() or not male.strip():
+            raise HTTPException(422, 'parent_genotypes_required')
+        temperature = source['initial_temperature']
+        for move in temperatures_of(db, cid):
+            if parse(move['at']) <= at:
+                temperature = move['temperature']
+        child = create_container(db, ContainerInput(
+            label=model.label, kind='egg_laying', purpose='egg_laying',
+            female_genotype=female.strip(), male_genotype=male.strip(),
+            setup_date=model.setup_date, setup_time=model.setup_time,
+            initial_temperature=model.initial_temperature if model.initial_temperature is not None else temperature,
+            temperature_policy=model.temperature_policy if model.temperature_policy is not None else source['temperature_policy'],
+            notes=model.notes if model.notes is not None else source['notes'], template=source['template'],
+        ), source, same)
+        child['source_relation'] = 'egg_laying_' + model.cohort_mode
+        save_container(db, child)
+        if same:
+            source['parents'] = 'transferred'
+            save_container(db, source)
+            for row in db.execute("SELECT payload FROM events WHERE container_id=? AND rule_key='transfer'", (cid,)).fetchall():
+                event = json.loads(row[0])
+                if event['status'] == 'pending':
+                    event['status'] = 'done'
+                    save_event(db, event)
+            reconcile(db, source)
+        log(db, cid, child['source_relation'], at.isoformat(timespec='minutes'), child['label'])
+        return child
+
+
 class ActionInput(BaseModel):
     action: Literal["remove", "clear", "collect", "tissue", "larvae", "pupae", "eclosion", "cold", "warm", "complete", "discard", "activate", "first_instar", "dissect", "image"]
     at: NaiveDatetime

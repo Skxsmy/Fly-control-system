@@ -12,6 +12,7 @@ export type Culture = {
   logs: {id: string; at: string; action: string; notes: string}[];
   clock: {state: string; last_clear: string | null; deadline: string | null};
   incubation?: Incubation | null; egg_batch_id?: string | null;
+  source_relation?: 'egg_laying_transfer' | 'egg_laying_generation';
   incubation_window?: {start: string; end: string; review: boolean}; egg_age_hours?: number[];
 };
 export type Incubation = {lay_start: string; lay_end: string; min_hours: number; max_hours: number; reference_temperature: number; lay_temperature: number};

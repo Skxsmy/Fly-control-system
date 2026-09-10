@@ -48,6 +48,17 @@ The workspace starts empty. Tests use a separate temporary database; no demonstr
 6. The Petri dish displays an egg-age range in hours and an expected first-instar window. The editable default is 24–30 hours, a planning preset rather than a validated universal range. Earliest time = laying start + minimum age; latest time = laying end + maximum age. For eggs laid September 10, 09:00–13:00, this preset gives September 11, 09:00–19:00.
 7. Record **Observe first instar** after inspection. Dissection and imaging can be logged separately, and their reminders can be manually scheduled. The predicted hatch interval is not a guarantee that all larvae remain first instar throughout that interval.
 
+### Start egg laying from an existing vial or bottle
+
+Open an active vial/bottle and choose **Create egg-laying container** under **Linked egg-laying containers**. Select which adults you are using:
+
+- **Move all original parents** retains their cohort and increments the transfer count. It requires parents to be present and below the source protocol's transfer limit. Saving records them as transferred and completes a pending parent-transfer reminder. Developing offspring and other source reminders keep their existing timeline.
+- **Select offspring from this culture** starts a new cohort with transfer count zero. Source parent state and reminders are preserved. If you completely clear the source, record that separately.
+
+Stock/virgin genotype text is prefilled for both sexes; verify the selected flies. A parental cross is copied when moving its original parents. When selecting cross offspring, enter their actual genotypes; the app does not infer Mendelian outcomes. Genotypes and notes can be edited for the new record without changing the source. The temperature policy and protocol defaults are inherited; the default setup temperature follows the source's recorded temperature at the new setup time, with an explicit override available.
+
+The new record has an independent D0, no copied observations, temperature history, egg batches, or vial-cycle reminders. Actual setup must be between source setup and now. The source and destination link to each other; the destination records whether its adults were original parents or selected offspring. Continue with **New egg collection**, then Petri dishes or direct egg use as above. Partial transfers of original parents and combining adults from multiple source containers are not yet modeled by this shortcut.
+
 The [JoVE timed-collection protocol](https://www.jove.com/v/20076/drosophila-burrowing-tunneling-assay-method-to-assess-tissue-hypoxia) describes a four-hour laying period and incubation at 25°C, with most larvae hatched by the following afternoon. Its video summary also describes a 24-hour incubation after timed collection. The software's 24–30-hour preset combines a practical starting estimate with the researcher's requested approximate 30-hour timing; it is not a measured confidence interval from that publication. Genotype, culture conditions, and the width of the laying window require local calibration.
 
 Choose the reference temperature for the entered hour bounds. If recorded laying/incubation temperatures differ, the dish and its task display a review warning. This workflow does not apply the culture manager's approximate 18°C multiplier or automatic cooling planner to an hour-sensitive experiment. Manually rescheduling a task changes the work plan, while the biological estimate remains visible separately.
