@@ -28,7 +28,7 @@ The workspace starts empty. Tests use a separate temporary database; no demonstr
 - Same-parent transfers increment the cohort's transfer index in the destination. Source records preserve their historical index and continue developing. Defaults: calendar D3, maximum two transfers. Early transfers use the actual new setup as the next interval anchor.
 - **Start next generation** creates a new cohort at transfer index zero. It does not pretend that offspring are the old parents.
 - Development checks default to equivalent D6; bottles receive a tissue task. This is a lab-defined inspection rule, not a claim that larvae first appear on D6.
-- Cross/virgin templates default to an eclosion watch at equivalent D9, followed by three collection windows per day beginning equivalent D10 for three days. D11 and other values are configurable.
+- Virgin production and crosses explicitly targeting F1 virgins use an eclosion watch at equivalent D9, followed by **one collection day only**, default equivalent D10, with three independent windows: 09:00–11:00, 15:00–15:30, and 19:00–21:00. The collection day and windows can be edited; no extra collection days are generated. The earlier three-day default was an implementation error, not the user's protocol.
 - Stock templates have a separately configurable renewal interval (initially 11 calendar days), without automatic virgin collection tasks.
 - Physical status, original-parent presence, observed stage, and temperature are stored separately. Forecasts do not overwrite observations.
 - **Initial state** supports importing existing cultures: choose active/planned status, parent presence, observed stage, and previous parent transfer count. Preserve the original setup date. Temperature at setup is the historical starting temperature; record later temperature moves separately. Imported stages do not fabricate a clear time or reset D0.
@@ -37,6 +37,25 @@ The workspace starts empty. Tests use a separate temporary database; no demonstr
 - Manual rescheduling pins the reminder. Forecast recalculation preserves pinned, completed, skipped, and disabled work. Restore deliberately returns an eligible generated task to its template.
 - Ending/discarding a culture cancels pending tasks but preserves records and activity.
 - A missed collection window appears in **Needs attention** as soon as its end time passes, including on the same day. Multi-day custom reminders appear on each applicable calendar day.
+
+## Purpose-specific culture workflows
+
+| Purpose | Default reminders and output |
+| --- | --- |
+| Stock maintenance | Culture/bottle check and stock renewal; optional parent transfer is off by default. |
+| Virgin collection | Optional D3 parent transfer, a D3–D5 parent-removal window, D6 culture check, D9 eclosion watch, and the three windows on D10 only. |
+| Genetic cross: F1 selection/scoring | Parental handling and development checks, then one default F1 selection/scoring window on D10, 09:00–17:00. No automatic virgin-collection reminders. |
+| Genetic cross: F1 virgin collection | Parental handling and development checks, then the same single-day three-window collection schedule, with a recorded target F1 genotype/phenotype. |
+| Egg-laying container | Independent timed egg collections. |
+| Petri dish | Egg-age range and an hour-based first-instar estimate. |
+
+The cross form records parental female virgin status, target F1 genotype/phenotype, and selection criteria. These are researcher-entered facts, not automatically inferred genetic outcomes. **Record F1 selection/scoring** logs phenotypes, sex, and counts in notes without classifying flies as virgin. **Observe eclosion** records the first observed F1 eclosion time and completes an associated watch task. F1 scoring can follow that observed date; virgin collection remains on its configured culture day. The editable parent-removal window ends at 17:00 on default D5, starts on the earlier of the transfer day or removal day, and disappears after parents leave. D0 and offspring development remain unchanged.
+
+The [University of Michigan cross protocol](https://bridgeslab.sph.umich.edu/protocols/index.php/Performing_Drosophila_Crosses) distinguishes parental setup/transfer from observing F1 emergence and sorting/counting progeny by phenotype. Its five-day parental transfer and approximately ten-day emergence timing inform editable starting presets, not universal guarantees. D3 optional transfer, maximum two transfers, and a single D10 virgin-collection day remain the user's lab rules. The previously cited virgin-collection paper is also available as a [Cambridge institutional-repository PDF](https://api.repository.cam.ac.uk/server/api/core/bitstreams/8627fe21-3f65-49ff-b2dc-c399684dfb94/content); it does not justify adding extra collection days.
+
+On upgrade, stored collection-day counts become one. Extra pending automatic collection tasks are cancelled; completed history and event IDs are preserved. Cancelled tasks are hidden unless **Show history** is enabled, and do not display an active Critical badge. Existing containers otherwise retain their workflow until you enable **Use the purpose-specific workflow** in Edit. On an explicit workflow switch, manually pinned tasks whose rules disappear are retained as custom work; unchanged pinned rules are not duplicated.
+
+Collection windows are displayed as a single interval, such as **09:00–11:00**. The collection form evaluates the actual complete-clear clock at the entered operation time, including backdated records, and marks unknown, elapsed, or mixed-temperature intervals for assessment. Scheduled times and clock state do not verify individual virginity; collecting selected females alone does not reset the clock.
 
 ## Egg-laying and hourly experiments
 
@@ -73,7 +92,7 @@ Previously saved spanning events are preserved; they are not silently shortened.
 
 The development model accumulates `elapsed days × rate`. The initial rates are 1.0 at 25°C and 0.5 at 18°C; the latter is editable. For date-only setups, midnight is an internal lower-bound reference, not a fabricated observed setup time. Predictions are approximate culture-level dates, not synchronized egg ages or confidence intervals.
 
-Planned setup search considers available slots over the next 14 days and prioritizes dates closest to the requested start. An active-culture search considers one cold interval, at hourly handling slots, up to seven cold days. It checks both physical moves and every generated critical window, including eclosion watch and repeated collection. Tasks need a contiguous 15-minute overlap with availability. Recommendations are optimal only among the bounded candidates, not across every possible biological or scheduling strategy.
+Planned setup search considers available slots over the next 14 days and prioritizes dates closest to the requested start. An active-culture search considers one cold interval, at hourly handling slots, up to seven cold days. It checks both physical moves and every generated critical window, including parental removal, eclosion watch, and the selected collection/scoring workflow. Tasks need a contiguous 15-minute overlap with availability. Recommendations are optimal only among the bounded candidates, not across every possible biological or scheduling strategy.
 
 The planner cannot guarantee eclosion timing or virginity. It does not infer a calibrated uncertainty distribution, model light-cycle effects, automatically interpret genotype temperature sensitivity, or linearly convert adult sexual maturation across mixed temperatures. A forbidden-temperature policy disables cooling recommendations. Manually pinned critical tasks require review before optimization. An already-cold culture or one whose predicted watch has begun requires manual assessment.
 
@@ -88,6 +107,8 @@ Automatic setup planning and cooling are included. Flexible rescheduling of othe
 - The launch window displays startup and runtime diagnostics.
 
 The backup endpoint uses SQLite's online backup API. Restore with the app stopped: preserve your current database separately, replace `data/flykeeper.db` with the downloaded snapshot, and restart. Sync exported snapshots rather than a running database. `FLYKEEPER_DB` can select a different local database path for tests or another isolated workspace.
+
+To clean up a mistaken/test container, open it and choose **Delete container permanently**. The preview lists its own reminders, logs, temperatures, plans, and egg batches; enter its exact label to confirm. A full SQLite backup is required and saved in `backups/` before deletion. Failure to back up leaves records untouched. Deletion is blocked while other containers or independently attached batch reminders depend on it; review downstream records first. A changed preview must be refreshed. This operation differs from End culture/Discard, which retain history and reserve labels. Permanent deletion releases the label; automatic naming chooses the lowest unused number for each container prefix and assigns a fresh internal identity. Existing containers are never renumbered. Restore from the full backup with the app stopped if necessary.
 
 ## Architecture
 
@@ -122,6 +143,8 @@ node --experimental-strip-types --test lib/*.test.mjs
 ```
 
 For interactive time simulation, run `.\.venv\Scripts\python.exe -m backend.review_server` from the project root and open `http://127.0.0.1:8001/`. This dedicated runner always uses `.qa/time-review.db`, separate from your workspace. Edit `.qa/clock.txt` with a laboratory-local timestamp such as `2026-09-25T15:00`. The UI picks it up on refresh or its next minute tick. The operating system clock and production server are unaffected. Do not use the QA workspace for real experimental records.
+
+Pytest also uses an isolated import-time bootstrap database via `backend/conftest.py`, before per-test fixtures select temporary databases. This prevents import-time schema upgrades from touching personal records during tests.
 
 See [REVIEW_REPORT.md](REVIEW_REPORT.md) for the user-flow review, fixes, and verification limits.
 

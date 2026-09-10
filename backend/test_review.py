@@ -8,11 +8,11 @@ def edit(client, culture, **changes):
     body.update(changes)
     return client.put(f"/api/containers/{culture['id']}", json=body)
 
-def test_removed_then_readded_template_days_restore_pending_reminders(client):
+def test_removed_then_readded_windows_restore_pending_reminders_on_one_day(client):
     c = create(client)
-    assert edit(client, c, template={**c['template'], 'collection_days': 1}).status_code == 200
+    assert edit(client, c, template={**c['template'], 'windows': [['09:00','11:00']]}).status_code == 200
     assert edit(client, c, template=c['template']).status_code == 200
-    assert len([e for e in snapshot(client)['events'] if e['kind'] == 'collect' and e['status'] == 'pending']) == 9
+    assert len([e for e in snapshot(client)['events'] if e['kind'] == 'collect' and e['status'] == 'pending']) == 3
 
 def test_removing_a_collection_window_does_not_transfer_its_completed_status(client):
     c = create(client)
@@ -20,7 +20,7 @@ def test_removing_a_collection_window_does_not_transfer_its_completed_status(cli
     client.patch(f"/api/events/{morning['id']}", json={'status':'done'})
     assert edit(client, c, template={**c['template'], 'windows': [['15:00','15:30'], ['19:00','21:00']]}).status_code == 200
     upcoming = [e for e in snapshot(client)['events'] if e['kind'] == 'collect' and e['status'] == 'pending']
-    assert len(upcoming) == 6
+    assert len(upcoming) == 2
     assert any(e['due'] == '2026-09-11T15:00' for e in upcoming)
 
 def test_offset_timestamp_cannot_poison_workspace(client):
@@ -82,7 +82,7 @@ def test_legacy_collection_key_upgrade_preserves_identity_and_history(client):
                 e.update(pinned=True, due='2026-09-28T16:00', end='2026-09-28T17:00')
             module.save_event(db, e)
     migrated = {e['id']:e for e in snapshot(client)['events'] if e['kind'] == 'collect'}
-    assert len(migrated) == 9
+    assert len(migrated) == 3
     assert migrated[events[0]['id']]['status'] == 'done'
     pinned = migrated[events[1]['id']]
     assert pinned['rule_key'] == 'collect-0-15:00-15:30'

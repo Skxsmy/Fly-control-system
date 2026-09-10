@@ -18,6 +18,8 @@ def client(tmp_path, monkeypatch):
 
 def create(client, **kwargs):
     payload = {"purpose": "cross", "female_genotype": "nub-GAL4/CyO", "male_genotype": "UAS-X/TM6B", "setup_date": "2026-09-01", "setup_time": "10:00", **kwargs}
+    if payload['purpose'] == 'cross' and 'workflow' not in kwargs:
+        payload['workflow'] = {'cross_goal': 'virgins'}
     response = client.post("/api/containers", json=payload)
     assert response.status_code == 200, response.text
     return response.json()
@@ -37,7 +39,7 @@ def test_d0_and_independent_collection_windows(client):
     assert data["containers"][0]["calendar_day"] == 0
     events = [e for e in data["events"] if e["container_id"] == c["id"]]
     assert next(e for e in events if e["kind"] == "transfer")["due"] == "2026-09-12T09:00"
-    assert len([e for e in events if e["kind"] == "collect"]) == 9
+    assert len([e for e in events if e["kind"] == "collect"]) == 3
     assert {e["due"][11:] for e in events if e["kind"] == "collect"} == {"09:00", "15:00", "19:00"}
 
 def test_date_only_remains_unknown(client):

@@ -10,3 +10,6 @@
 .egg-batch { border: 1px solid #dbe3dd; border-radius: 12px; padding: 16px; margin-top: 14px; }
 .egg-batch h4 { margin: 0 0 8px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .egg-batch p { overflow-wrap: anywhere; }
+.task-time { min-width: 90px; }
+.task-time strong { white-space: nowrap; }
+.archive-actions { flex-wrap: wrap; }

@@ -13,8 +13,10 @@ export type Culture = {
   clock: {state: string; last_clear: string | null; deadline: string | null};
   incubation?: Incubation | null; egg_batch_id?: string | null;
   source_relation?: 'egg_laying_transfer' | 'egg_laying_generation';
+  workflow?: Workflow | null; first_eclosion_at?: string;
   incubation_window?: {start: string; end: string; review: boolean}; egg_age_hours?: number[];
 };
+export type Workflow = {cross_goal: 'score' | 'virgins'; transfer_enabled: boolean; remove_day: number; selection_day: number; selection_days: number; selection_window: string[]; target_genotype: string; selection_notes: string; female_virgins: 'unconfirmed' | 'confirmed'; follow_eclosion: boolean};
 export type Incubation = {lay_start: string; lay_end: string; min_hours: number; max_hours: number; reference_temperature: number; lay_temperature: number};
 export type EggBatch = {id: string; label: string; source_id: string; lay_start: string; lay_end: string; genotype: string; temperature: number; notes: string; status: 'planned' | 'collected' | 'cancelled'; collected_at: string | null; uses: {id: string; at: string; purpose: string; notes: string}[]};
 export type Task = {

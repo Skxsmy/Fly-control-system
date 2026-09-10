@@ -97,9 +97,9 @@ def test_planned_culture_never_auto_activates_as_time_passes(lab):
 def test_pinned_task_survives_rule_removal_readdition_and_time(lab):
     client, advance = lab
     c = create(client, setup_date='2026-09-21', setup_time='09:00')
-    task = next(e for e in snapshot(client)['events'] if e['rule_key'].startswith('collect-2-'))
+    task = next(e for e in snapshot(client)['events'] if e['rule_key'] == 'collect-0-19:00-21:00')
     client.patch(f"/api/events/{task['id']}", json={'due':'2026-10-04T10:00','end':'2026-10-04T11:00'})
-    edit(client, c, template={**c['template'], 'collection_days':1})
+    edit(client, c, template={**c['template'], 'windows':[['09:00','11:00'],['15:00','15:30']]})
     edit(client, c, template=c['template'])
     data = advance('2026-10-04T12:00')
     restored = next(e for e in data['events'] if e['id'] == task['id'])

@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, NaiveDatetime, field_validator, model_validator
 from .domain import (DEFAULT_SETTINGS, DEFAULT_TEMPLATE, start_of, parse, effective_age,
                      generated_events, event_conflict, virgin_clock, suggest_cooling, incubation_window)
+from .container_cleanup import preview_container_deletion, delete_container_permanently, next_container_label
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.environ.get("FLYKEEPER_DB", ROOT / "data" / "flykeeper.db"))
@@ -58,6 +59,15 @@ def init_db():
         """)
         db.execute("INSERT OR IGNORE INTO meta VALUES('settings',?)", (dump(DEFAULT_SETTINGS),))
         db.execute("INSERT OR IGNORE INTO meta VALUES('schema_version','1')")
+        if not db.execute("SELECT 1 FROM meta WHERE key='single_day_collection_v1'").fetchone():
+            settings = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
+            settings['template']['collection_days'] = 1
+            db.execute("UPDATE meta SET value=? WHERE key='settings'", (dump(settings),))
+            for row in db.execute('SELECT id,payload FROM containers').fetchall():
+                value = json.loads(row['payload'])
+                value['template']['collection_days'] = 1
+                db.execute('UPDATE containers SET payload=? WHERE id=?', (dump(value), row['id']))
+            db.execute("INSERT INTO meta VALUES('single_day_collection_v1','1')")
 
 init_db()
 
@@ -145,7 +155,7 @@ class Template(BaseModel):
     max_transfers: int = Field(2, ge=0, le=20)
     check_day: int = Field(6, ge=1, le=60)
     collection_day: int = Field(10, ge=1, le=90)
-    collection_days: int = Field(3, ge=1, le=14)
+    collection_days: Literal[1] = 1
     stock_interval: int = Field(11, ge=1, le=90)
     watch_day: int = Field(9, ge=1, le=89)
     windows: list[list[str]] = Field(default_factory=lambda: DEFAULT_TEMPLATE["windows"], min_length=1, max_length=8)
@@ -193,6 +203,7 @@ class ContainerInput(BaseModel):
     initial_status: Literal['auto', 'active', 'planned'] = 'auto'
     incubation: Incubation | None = None
     egg_batch_id: str | None = None
+    workflow: 'Workflow | None' = None
 
     @field_validator("setup_time")
     @classmethod
@@ -223,15 +234,34 @@ class ContainerInput(BaseModel):
             raise ValueError("genotype_required")
         return self
 
+class Workflow(BaseModel):
+    cross_goal: Literal['score', 'virgins'] = 'score'
+    transfer_enabled: bool = True
+    remove_day: int = Field(5, ge=1, le=30)
+    selection_day: int = Field(10, ge=1, le=90)
+    selection_days: int = Field(1, ge=1, le=14)
+    selection_window: list[str] = Field(default_factory=lambda: ['09:00', '17:00'], min_length=2, max_length=2)
+    target_genotype: str = Field('', max_length=1000)
+    selection_notes: str = Field('', max_length=3000)
+    female_virgins: Literal['unconfirmed', 'confirmed'] = 'unconfirmed'
+    follow_eclosion: bool = True
+
+    @field_validator('selection_window')
+    @classmethod
+    def valid_selection_window(cls, value):
+        validate_windows([value])
+        return value
+
+ContainerInput.model_rebuild()
+
+
 def create_container(db, model, parent=None, same_cohort=False):
     value = model.model_dump(mode="json")
+    if value['workflow'] is None and value['kind'] in ('vial', 'bottle'):
+        value['workflow'] = Workflow(transfer_enabled=value['purpose'] != 'stock').model_dump(mode='json')
     cid = uid()
     if not value["label"].strip():
-        prefix = {'bottle':'B', 'vial':'V', 'petri_dish':'P', 'egg_laying':'E'}[value['kind']]
-        number = db.execute("SELECT COUNT(*) FROM containers").fetchone()[0] + 1
-        while db.execute("SELECT 1 FROM containers WHERE label=?", (f"{prefix}{number:04}",)).fetchone():
-            number += 1
-        value["label"] = f"{prefix}{number:04}"
+        value['label'] = next_container_label(db, value['kind'])
     future = parse(value['setup_date'] + 'T' + (value.get('setup_time') or '00:00')) > now_of(db)
     initial_status = value.pop('initial_status')
     if future and initial_status == 'active':
@@ -319,6 +349,20 @@ def new_container(model: ContainerInput):
     with database() as db:
         return create_container(db, model)
 
+@app.get('/api/containers/{cid}/delete-preview')
+def delete_preview(cid: str):
+    with database() as db:
+        return preview_container_deletion(db, cid)
+
+class DeleteContainerInput(BaseModel):
+    confirmation_label: str
+    fingerprint: str
+
+@app.delete('/api/containers/{cid}')
+def delete_container(cid: str, model: DeleteContainerInput):
+    with database() as db:
+        return delete_container_permanently(db, cid, model.confirmation_label, model.fingerprint, ROOT / 'backups')
+
 class EditContainer(BaseModel):
     label: str = Field(min_length=1, max_length=80)
     genotype: str = Field("", max_length=1000)
@@ -330,6 +374,7 @@ class EditContainer(BaseModel):
     setup_date: date | None = None
     setup_time: str | None = None
     incubation: Incubation | None = None
+    workflow: Workflow | None = None
 
     @field_validator("setup_time")
     @classmethod
@@ -341,7 +386,18 @@ def edit_container(cid: str, model: EditContainer):
     with database() as db:
         c = get_container(db, cid)
         reconcile(db, c)
-        changes = model.model_dump(mode="json", exclude={"setup_date", "setup_time", "incubation"})
+        changes = model.model_dump(mode="json", exclude={"setup_date", "setup_time", "incubation", "workflow"})
+        if model.workflow is not None:
+            # An explicit workflow switch preserves manually pinned instructions as custom work.
+            if c.get('workflow') != model.workflow.model_dump(mode='json'):
+                proposed = {**c, 'workflow': model.workflow.model_dump(mode='json'), 'template': model.template.model_dump(mode='json')}
+                expected = {event['rule_key'] for event in generated_events(proposed, temperatures_of(db, cid))}
+                for row in db.execute('SELECT payload FROM events WHERE container_id=?', (cid,)).fetchall():
+                    event = json.loads(row[0])
+                    if event['status'] == 'pending' and event['pinned'] and event['rule_key'] not in expected and not event['rule_key'].startswith(('custom-', 'plan-')):
+                        event.update(rule_key='custom-preserved-' + event['id'], basis='manual')
+                        save_event(db, event)
+            changes['workflow'] = model.workflow.model_dump(mode='json')
         changes['label'] = changes['label'].strip()
         if not changes["label"].strip():
             raise HTTPException(422, "invalid_label")
@@ -388,6 +444,8 @@ def transfer(cid: str, model: TransferInput):
             data['template'] = c['template']
         if same:
             data.update(female_genotype=c["female_genotype"], male_genotype=c["male_genotype"], genotype=c["genotype"], purpose=c["purpose"])
+        if model.workflow is None and (same or model.purpose == c['purpose']):
+            data['workflow'] = c.get('workflow') or Workflow(cross_goal='virgins', transfer_enabled=True).model_dump(mode='json')
         child = create_container(db, ContainerInput(**data), c, same)
         if same:
             c["parents"] = "transferred"
@@ -466,7 +524,7 @@ def egg_laying_from_container(cid: str, model: EggLayingFromInput):
 
 
 class ActionInput(BaseModel):
-    action: Literal["remove", "clear", "collect", "tissue", "larvae", "pupae", "eclosion", "cold", "warm", "complete", "discard", "activate", "first_instar", "dissect", "image"]
+    action: Literal["remove", "clear", "collect", "tissue", "larvae", "pupae", "eclosion", "cold", "warm", "complete", "discard", "activate", "first_instar", "dissect", "image", "score"]
     at: NaiveDatetime
     notes: str = Field("", max_length=10000)
     cleared: bool = False
@@ -501,6 +559,8 @@ def action(cid: str, model: ActionInput):
             c["parents"] = "removed"
         elif model.action in ("larvae", "pupae", "eclosion", 'first_instar'):
             c["stage"] = model.action
+            if model.action == 'eclosion':
+                c['first_eclosion_at'] = min(stamp, c.get('first_eclosion_at') or stamp)
         elif model.action in ("complete", "discard"):
             c["status"] = "completed" if model.action == "complete" else "discarded"
         elif model.action == "activate":
@@ -520,7 +580,7 @@ def action(cid: str, model: ActionInput):
             if not row:
                 raise HTTPException(404, "event_not_found")
             e = json.loads(row[0])
-            if e["status"] != "pending" or e["kind"] != model.action:
+            if e["status"] != "pending" or ('eclosion' if e['kind'] == 'watch' else e['kind']) != model.action:
                 raise HTTPException(409, "event_action_mismatch")
             e["status"] = "done"
             save_event(db, e)
@@ -529,11 +589,11 @@ def action(cid: str, model: ActionInput):
             matches = []
             for row in db.execute('SELECT payload FROM events WHERE container_id=?', (cid,)).fetchall():
                 e = json.loads(row[0])
-                if e['status'] != 'pending' or e['kind'] != model.action:
+                if e['status'] != 'pending' or ('eclosion' if e['kind'] == 'watch' else e['kind']) != model.action:
                     continue
-                if model.action == 'collect' and not (parse(e['due']) <= at <= parse(e['end'])):
+                if model.action in ('collect', 'score') and not (parse(e['due']) <= at <= parse(e['end'])):
                     continue
-                if model.action in ('tissue', 'cold', 'warm', 'collect', 'first_instar'):
+                if model.action in ('tissue', 'cold', 'warm', 'collect', 'first_instar', 'remove', 'eclosion', 'score'):
                     matches.append(e)
             if matches:
                 e = min(matches, key=lambda x: abs((parse(x['due']) - at).total_seconds()))

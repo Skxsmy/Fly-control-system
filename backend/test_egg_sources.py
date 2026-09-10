@@ -47,7 +47,10 @@ def test_same_parents_keep_cohort_increment_transfer_and_complete_only_transfer_
         assert len(after['events']) == len(before['events'])
         for event in after['events']:
             original = next(e for e in before['events'] if e['id'] == event['id'])
-            assert event == ({**original, 'status': 'done', 'conflict': False} if event['kind'] == 'transfer' else original)
+            if event['kind'] == 'remove':
+                assert event['status'] == 'cancelled' and event['due'] == original['due']
+            else:
+                assert event == ({**original, 'status': 'done', 'conflict': False} if event['kind'] == 'transfer' else original)
     assert derive(client, source, cohort_mode='transfer').status_code == 409
 
 

@@ -5,6 +5,8 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose } fr
 import { Button } from './ui/button';
 import { api } from '@/lib/api';
 import { endAfterMove } from '@/lib/reminder-window';
+import { WorkflowFields, workflowFrom } from './workflow-fields';
+import { VirginCollectionGuidance } from './virgin-collection-guidance';
 import { t, fmtDate, fmtTime, fmtNumber, weekday, availableLocales } from '@/lib/i18n';
 import type { AppState, Culture, Task, Template, Settings, Suggestions, EggBatch, Incubation } from '@/lib/types';
 
@@ -43,15 +45,17 @@ export function parseWindows(value: string) {
 export const windowsText = (windows: string[][]) => windows.map(pair => pair.join('–')).join(', ');
 function fieldValue(form: FormData, key: string) {const value = form.get(key); return typeof value === 'string' ? value : '';}
 
-const templateNumbers: (keyof Template)[] = ['transfer_day', 'max_transfers', 'check_day', 'watch_day', 'collection_day', 'collection_days', 'stock_interval', 'rate18', 'virgin_hours25', 'virgin_hours18'];
-export function ProtocolFields({template}: {template: Template}) {
-  return <div className="protocol-fields"><div className="form-grid">{templateNumbers.map(key => <Field key={key} label={t(`settings.${key}`)}><input name={`template.${key}`} type="number" required min={key === 'max_transfers' ? 0 : key === 'rate18' ? 0.01 : 1} max={key === 'rate18' ? 0.99 : undefined} step={key === 'rate18' ? 0.01 : 1} defaultValue={template[key] as number}/></Field>)}</div>
-    <Field label={t('settings.windows')} hint={t('calendar.windowsHint')}><input name="template.windows" defaultValue={windowsText(template.windows)} required/></Field><p className="subtle">{t('settings.rateHint')}</p></div>;
+const templateNumbers: (keyof Template)[] = ['transfer_day', 'max_transfers', 'check_day', 'watch_day', 'collection_day', 'stock_interval', 'rate18', 'virgin_hours25', 'virgin_hours18'];
+export function ProtocolFields({template, purpose, goal}: {template: Template; purpose?: Culture['purpose']; goal?: 'score' | 'virgins'}) {
+  const collection = !purpose || purpose === 'virgin' || (purpose === 'cross' && goal !== 'score');
+  const keys = templateNumbers.filter(key => !purpose || (key === 'stock_interval' ? purpose === 'stock' : ['collection_day','virgin_hours25','virgin_hours18'].includes(key) ? collection : key === 'watch_day' ? purpose !== 'stock' : true));
+  return <div className="protocol-fields"><div className="form-grid">{keys.map(key => <Field key={key} label={t(`settings.${key}`)}><input name={`template.${key}`} type="number" required min={key === 'max_transfers' ? 0 : key === 'rate18' ? 0.01 : 1} max={key === 'rate18' ? 0.99 : undefined} step={key === 'rate18' ? 0.01 : 1} defaultValue={template[key] as number}/></Field>)}</div>
+    {collection && <><Field label={t('settings.windows')} hint={t('calendar.windowsHint')}><input name="template.windows" defaultValue={windowsText(template.windows)} required/></Field><p className="notice">{t('workflow.singleDay')}</p></>}<p className="subtle">{t('settings.rateHint')}</p></div>;
 }
-export function templateFrom(form: FormData): Template {
-  const result: Record<string, unknown> = {};
-  templateNumbers.forEach(key => result[key] = Number(form.get(`template.${key}`)));
-  result.windows = parseWindows(fieldValue(form, 'template.windows'));
+export function templateFrom(form: FormData, base?: Template): Template {
+  const result: Record<string, unknown> = {...base, collection_days: 1};
+  templateNumbers.forEach(key => {if (form.has(`template.${key}`)) result[key] = Number(form.get(`template.${key}`));});
+  if (form.has('template.windows')) result.windows = parseWindows(fieldValue(form, 'template.windows'));
   return result as Template;
 }
 
@@ -99,11 +103,13 @@ export function ContainerForm({state, source, mode, eggBatch, close, saved}: {st
   const batch = state.egg_batches.find(b => b.id === batchId);
   const hourly = kind === 'petri_dish' || kind === 'egg_laying';
   const edit = mode === 'edit';
+  const [useWorkflow, setUseWorkflow] = useState(!edit || !!source?.workflow);
+  const [crossGoal, setCrossGoal] = useState<'score' | 'virgins'>(source?.workflow?.cross_goal || (edit ? 'virgins' : 'score'));
   return <Modal title={t(edit ? 'container.edit' : mode === 'transfer' ? 'container.transfer' : mode === 'generation' ? 'container.nextGeneration' : 'common.newContainer')} description={t(mode === 'transfer' ? 'container.transferHint' : mode === 'generation' ? 'container.generationHint' : kind === 'petri_dish' ? 'eggs.dishHint' : 'container.newHint')} close={close} wide>
     <Form close={close} label={t(edit ? 'common.save' : 'common.create')} submit={async form => {
       const payload = {label: fieldValue(form, 'label'), kind, purpose, genotype: (fieldValue(form, 'genotype') || ''), female_genotype: (fieldValue(form, 'female_genotype') || ''), male_genotype: (fieldValue(form, 'male_genotype') || ''),
         ...(!edit || source?.status === 'planned' ? {setup_date: fieldValue(form, 'setup_date'), setup_time: (fieldValue(form, 'setup_time') || '') || null} : {}), initial_temperature: Number(form.get('initial_temperature')),
-        temperature_policy: fieldValue(form, 'temperature_policy'), notes: fieldValue(form, 'notes'), template: hourly ? source?.template || state.settings.template : templateFrom(form), ...(kind === 'petri_dish' ? {incubation: incubationFrom(form), egg_batch_id: batchId || null} : {}), ...(mode ? {mode} : {initial_status: fieldValue(form, 'initial_status'), parents: kind === 'petri_dish' ? 'removed' : fieldValue(form, 'parents'), stage: fieldValue(form, 'stage'), transfer_index: Number(form.get('transfer_index'))})};
+        temperature_policy: fieldValue(form, 'temperature_policy'), notes: fieldValue(form, 'notes'), template: hourly ? source?.template || state.settings.template : templateFrom(form, source?.template || state.settings.template), ...(!hourly && useWorkflow ? {workflow:workflowFrom(form,crossGoal,source?.workflow)} : {}), ...(kind === 'petri_dish' ? {incubation: incubationFrom(form), egg_batch_id: batchId || null} : {}), ...(mode ? {mode} : {initial_status: fieldValue(form, 'initial_status'), parents: kind === 'petri_dish' ? 'removed' : fieldValue(form, 'parents'), stage: fieldValue(form, 'stage'), transfer_index: Number(form.get('transfer_index'))})};
       const result = await api<Culture>(edit ? `/containers/${source!.id}` : mode ? `/containers/${source!.id}/transfer` : '/containers', edit ? 'PUT' : 'POST', payload);
       await saved(result.id); close();
     }}>
@@ -125,19 +131,24 @@ export function ContainerForm({state, source, mode, eggBatch, close, saved}: {st
       </div></section>}
       <Field label={t('temperature.policy')}><select name="temperature_policy" defaultValue={source?.temperature_policy || 'allowed'}><option value="allowed">{t('temperature.allowed')}</option><option value="forbidden">{t('temperature.forbidden')}</option></select></Field>
       <Field label={t('common.notes')}><textarea name="notes" rows={2} defaultValue={edit ? source?.notes : ''}/></Field>
-      {!hourly && <details className="form-section"><summary>{t('container.protocol')}</summary><ProtocolFields template={source?.template || state.settings.template}/></details>}
+      {!hourly && edit && !source?.workflow && <label className="check-label"><input type="checkbox" checked={useWorkflow} onChange={e => setUseWorkflow(e.target.checked)}/>{t('workflow.upgrade')}</label>}
+      {!hourly && useWorkflow && <WorkflowFields key={purpose} purpose={purpose} value={source?.workflow} goal={crossGoal} setGoal={setCrossGoal}/>}
+      {!hourly && <details className="form-section"><summary>{t('container.protocol')}</summary><ProtocolFields template={source?.template || state.settings.template} purpose={purpose} goal={useWorkflow ? crossGoal : 'virgins'}/></details>}
       {mode && mode !== 'edit' && <p className="notice">{t('container.noReset')}</p>}
     </Form>
   </Modal>;
 }
 
 export function ActionForm({culture, action, event, now, close, saved}: {culture: Culture; action: string; event?: Task; now: string; close: () => void; saved: () => Promise<void>}) {
+  const [actionTime, setActionTime] = useState(now.slice(0,16));
   return <Modal title={`${t(`action.${action}`)} · ${culture.label}`} close={close}>
     <Form close={close} label={t('common.record')} submit={async form => {
       await api(`/containers/${culture.id}/actions`, 'POST', {action, at: fieldValue(form, 'at'), cleared: form.get('cleared') === 'on', notes: fieldValue(form, 'notes'), event_id: event?.id});
       await saved(); close();
     }}>
-      <Field label={t('action.at')}><input name="at" type="datetime-local" defaultValue={now.slice(0, 16)} required min={action === 'activate' ? undefined : `${culture.setup_date}T${culture.setup_time || '00:00'}`} max={now.slice(0, 16)}/></Field>
+      <Field label={t('action.at')}><input name="at" type="datetime-local" value={actionTime} onInput={e => setActionTime(e.currentTarget.value)} onChange={e => setActionTime(e.target.value)} required min={action === 'activate' ? undefined : `${culture.setup_date}T${culture.setup_time || '00:00'}`} max={now.slice(0, 16)}/></Field>
+      {action === 'collect' && <VirginCollectionGuidance culture={culture} now={now} actionTime={actionTime} compact/>}
+      {action === 'score' && <p className="notice">{t('workflow.scoreHint')}{culture.workflow?.target_genotype ? ` ${culture.workflow.target_genotype}` : ''}</p>}
       {action === 'collect' && <label className="check-label"><input name="cleared" type="checkbox"/>{t('action.cleared')}</label>}
       {['clear', 'collect'].includes(action) && <p className="notice">{t('action.clearHint')}</p>}
       {['complete', 'discard'].includes(action) && <p className="notice warning">{t('action.endHint')}</p>}

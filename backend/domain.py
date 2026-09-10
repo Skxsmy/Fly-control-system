@@ -3,7 +3,7 @@ from datetime import date, datetime, time, timedelta
 
 DEFAULT_TEMPLATE = {
     "transfer_day": 3, "max_transfers": 2, "check_day": 6,
-    "collection_day": 10, "collection_days": 3, "stock_interval": 11,
+    "collection_day": 10, "collection_days": 1, "stock_interval": 11,
     "windows": [["09:00", "11:00"], ["15:00", "15:30"], ["19:00", "21:00"]],
     "rate18": 0.5, "virgin_hours25": 8, "virgin_hours18": 16,
     "watch_day": 9,
@@ -72,11 +72,16 @@ def generated_events(container, temperatures):
         add('first-instar', 'first_instar', parse(interval['start']), parse(interval['end']), True, 'hours')
         events[-1]['timing_review'] = interval['review']
         return events
-    if container["parents"] == "present" and container["transfer_index"] < template["max_transfers"]:
+    workflow = container.get('workflow')
+    if container["parents"] == "present" and container["transfer_index"] < template["max_transfers"] and (workflow is None or workflow['transfer_enabled']):
         due = origin + timedelta(days=template["transfer_day"])
         if not container.get("setup_time"):
             due = due.replace(hour=9)
         add("transfer", "transfer", due)
+    if workflow and container['purpose'] in ('cross', 'virgin') and container['parents'] == 'present':
+        due = (origin + timedelta(days=min(template['transfer_day'], workflow['remove_day']))).replace(hour=9, minute=0)
+        end = (origin + timedelta(days=workflow['remove_day'])).replace(hour=17, minute=0)
+        add('parents-remove', 'remove', due, end, critical=True)
     check = forecast(container, temperatures, template["check_day"]).replace(hour=9, minute=0)
     add("check", "tissue" if container["kind"] == "bottle" else "check", check, basis="development")
     if container["purpose"] == "stock":
@@ -85,8 +90,18 @@ def generated_events(container, temperatures):
     else:
         watch = forecast(container, temperatures, template["watch_day"]).replace(hour=9, minute=0)
         add("watch", "watch", watch, critical=True, basis="development")
-        first = forecast(container, temperatures, template["collection_day"])
-        for day in range(template["collection_days"]):
+        scoring = container['purpose'] == 'cross' and workflow and workflow['cross_goal'] == 'score'
+        first = forecast(container, temperatures, workflow['selection_day'] if scoring else template['collection_day'])
+        # Virgin collection is exactly ONE configured culture day, as requested.
+        if scoring and workflow['follow_eclosion'] and container.get('first_eclosion_at'):
+            first = parse(container['first_eclosion_at'])
+        if scoring:
+            for day in range(workflow['selection_days']):
+                due = datetime.combine(first.date() + timedelta(days=day), time.fromisoformat(workflow['selection_window'][0]))
+                end = datetime.combine(due.date(), time.fromisoformat(workflow['selection_window'][1]))
+                add(f'score-{day}', 'score', due, end, True, 'development')
+            return events
+        for day in range(1):
             for slot, window in enumerate(template["windows"]):
                 due = datetime.combine(first.date() + timedelta(days=day), time.fromisoformat(window[0]))
                 end = datetime.combine(due.date(), time.fromisoformat(window[1]))
@@ -123,7 +138,7 @@ def event_conflict(event, settings, exceptions):
     return True
 
 def virgin_clock(container, temperatures, logs, now):
-    clears = [x for x in logs if x["action"] == "clear"]
+    clears = [x for x in logs if x["action"] == "clear" and parse(x['at']) <= now]
     if not clears:
         return {"state": "unknown", "last_clear": None, "deadline": None}
     last = max(clears, key=lambda x: x["at"])["at"]
