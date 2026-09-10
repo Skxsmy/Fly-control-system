@@ -34,3 +34,6 @@
 .import-comparison thead th:not(:first-child) { text-align: right; }
 @media(max-width:600px) { .backup-panel { padding: 18px; } .settings-sections { gap: 8px; } .settings-sections [data-slot=button] { font-size: .78rem; padding-inline: 11px; } .sidebar nav { gap: 3px; } }
 @media(max-width:950px) { .settings-layout { grid-template-columns: 1fr; } }
+
+.activity-dot{flex-shrink:0}.activity-content{flex:1;min-width:0}.activity-delete{color:#aa453e}.activity-delete-summary p{margin-top:6px;overflow-wrap:anywhere}
+.activity-reopen{display:grid;gap:12px}.activity-reopen legend{margin-bottom:10px}.activity-reopen small{display:block;color:#63755a;margin-top:3px}

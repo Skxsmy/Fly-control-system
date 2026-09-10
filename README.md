@@ -22,6 +22,12 @@ For a fresh installation, install Python 3.13+ and Node.js 22.13+, then run `Set
 
 The workspace starts empty. Tests use a separate temporary database; no demonstration cultures are inserted into your records.
 
+## Correct a recorded operation
+
+Open the container and find **Activity**. The trash button beside an operation opens **Delete activity?**, which previews the changes that will be undone. Confirming removes the mistaken record and restores its associated state and reminders. A collection recorded together with a complete adult clear is undone as one operation. Deletion saves a database backup first.
+
+Later activity or edits that depend on the operation must be resolved before undoing it. Linked containers are never deleted by an activity deletion. For older records without a saved previous state, the dialog requests the necessary state correction or lets you select completed reminders to reopen. An older operation whose effects cannot be identified safely displays the reason it cannot yet be undone.
+
 ## Implemented rules
 
 - Setup date is **D0**. Each new vial/bottle has an independent timeline. A date-only setup remains date-only in storage and is visibly marked approximate.

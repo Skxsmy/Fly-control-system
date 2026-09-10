@@ -3,13 +3,14 @@ export type Template = {
   collection_days: number; stock_interval: number; watch_day: number; windows: string[][];
   rate18: number; virgin_hours25: number; virgin_hours18: number;
 };
+export type ActivityRecord = {id: string; at: string; action: string; notes: string};
 export type Culture = {
   id: string; label: string; kind: 'vial' | 'bottle' | 'petri_dish' | 'egg_laying'; purpose: 'stock' | 'cross' | 'virgin' | 'larvae' | 'egg_laying' | 'dissection' | 'imaging' | 'other';
   genotype: string; female_genotype: string; male_genotype: string; setup_date: string; setup_time: string | null;
   initial_temperature: number; temperature: number; temperature_policy: string; notes: string; template: Template;
   cohort_id: string; transfer_index: number; source_id: string | null; parents: string; stage: string; status: string;
   calendar_day: number; effective_age: number; temperatures: {at: string; temperature: number}[];
-  logs: {id: string; at: string; action: string; notes: string}[];
+  logs: ActivityRecord[];
   clock: {state: string; last_clear: string | null; deadline: string | null};
   incubation?: Incubation | null; egg_batch_id?: string | null;
   source_relation?: 'egg_laying_transfer' | 'egg_laying_generation' | 'egg_laying_parents' | 'egg_laying_offspring';

@@ -49,6 +49,10 @@ def _deletion_snapshot(db, cid):
 
     owned = {table: _rows(db, f"SELECT * FROM {table} WHERE container_id=? ORDER BY id", (cid,))
              for table in OWNED_TABLES}
+    undo_records = []
+    for activity in owned['logs']:
+        undo_records.extend(_rows(db, 'SELECT * FROM meta WHERE key=?',
+                                  ('activity_undo:' + activity['id'],)))
     batches = _rows(db, "SELECT * FROM egg_batches ORDER BY id")
     owned["egg_batches"] = [row for row in batches if row["source_id"] == cid]
     batch_ids = {row["id"] for row in owned["egg_batches"]}
@@ -81,7 +85,8 @@ def _deletion_snapshot(db, cid):
             blockers.append({"type": "egg_batch", "id": row["id"],
                              "label": value.get("label", row["id"]), "reasons": ["source_container"]})
 
-    return {"version": 1, "container": container, "owned": owned, "blockers": blockers}
+    return {"version": 1, "container": container, "owned": owned, "blockers": blockers,
+            "undo_records": undo_records}
 
 
 def preview_container_deletion(db, cid):
@@ -144,6 +149,8 @@ def delete_container_permanently(db, cid, confirmation_label, fingerprint, backu
     backup_path = _backup_before_delete(db, backup_dir)
     db.execute("SAVEPOINT permanent_container_delete")
     try:
+        for activity in db.execute('SELECT id FROM logs WHERE container_id=?', (cid,)).fetchall():
+            db.execute('DELETE FROM meta WHERE key=?', ('activity_undo:' + activity[0],))
         for table in OWNED_TABLES:
             db.execute(f"DELETE FROM {table} WHERE container_id=?", (cid,))
         db.execute("DELETE FROM egg_batches WHERE source_id=?", (cid,))

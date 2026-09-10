@@ -151,6 +151,10 @@ def _validate_records(rows, services):
     for row in rows['meta']:
         _text(row['key'], 200)
         _text(row['value'], 100000, allow_empty=True)
+        if row['key'].startswith('activity_undo:'):
+            from .activity_cleanup import validate_journal
+            if not validate_journal(_json_object(row['value']), row['key']):
+                _invalid()
     settings = _json_object(meta['settings'])
     services.SettingsInput.model_validate_json(json.dumps(settings), strict=True)
     # A backup cannot revive the obsolete multiple-day virgin collection rule.

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, NaiveDatetime, field_validator, model_val
 from .domain import (DEFAULT_SETTINGS, DEFAULT_TEMPLATE, start_of, parse, effective_age,
                      generated_events, event_conflict, virgin_clock, suggest_cooling, incubation_window, eclosion_estimate)
 from .container_cleanup import preview_container_deletion, delete_container_permanently, next_container_label
+from . import activity_cleanup
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.environ.get("FLYKEEPER_DB", ROOT / "data" / "flykeeper.db"))
@@ -411,6 +412,22 @@ def delete_container(cid: str, model: DeleteContainerInput):
     with database() as db:
         return delete_container_permanently(db, cid, model.confirmation_label, model.fingerprint, ROOT / 'backups')
 
+class DeleteActivityInput(BaseModel):
+    fingerprint: str
+    corrections: dict[str, str] = Field(default_factory=dict)
+    reopen_event_ids: list[str] = Field(default_factory=list)
+
+@app.get('/api/containers/{cid}/activities/{lid}/delete-preview')
+def activity_delete_preview(cid: str, lid: str):
+    with database() as db:
+        return activity_cleanup.preview_activity_deletion(db, cid, lid, sys.modules[__name__])
+
+@app.delete('/api/containers/{cid}/activities/{lid}')
+def activity_delete(cid: str, lid: str, model: DeleteActivityInput):
+    with database() as db:
+        return activity_cleanup.delete_activity(db, cid, lid, model.fingerprint,
+            model.corrections, model.reopen_event_ids, ROOT / 'backups', reconcile, get_container, sys.modules[__name__])
+
 class EditContainer(BaseModel):
     label: str = Field(min_length=1, max_length=80)
     genotype: str = Field("", max_length=1000)
@@ -506,6 +523,7 @@ class TransferInput(ContainerInput):
 @app.post("/api/containers/{cid}/transfer")
 def transfer(cid: str, model: TransferInput):
     with database() as db:
+        activity_before = activity_cleanup.snapshot(db)
         c = get_container(db, cid)
         if c['kind'] in ('petri_dish', 'egg_laying') or model.kind in ('petri_dish', 'egg_laying'):
             raise HTTPException(409, 'use_egg_workflow')
@@ -536,6 +554,7 @@ def transfer(cid: str, model: TransferInput):
             e["status"] = "done"
             save_event(db, e)
         reconcile(db, c)
+        activity_cleanup.record(db, activity_before, cid)
         return child
 
 class EggLayingFromInput(BaseModel):
@@ -568,6 +587,7 @@ class EggLayingFromInput(BaseModel):
 @app.post('/api/containers/{cid}/egg-laying')
 def egg_laying_from_container(cid: str, model: EggLayingFromInput):
     with database() as db:
+        activity_before = activity_cleanup.snapshot(db)
         source = get_container(db, cid)
         if source['kind'] not in ('vial', 'bottle'):
             raise HTTPException(409, 'egg_laying_source_required')
@@ -596,6 +616,7 @@ def egg_laying_from_container(cid: str, model: EggLayingFromInput):
         # Selecting adults never asserts that every parent was moved or completes source work.
         if not planned:
             log(db, cid, child['source_relation'], at.isoformat(timespec='minutes'), child['label'])
+            activity_cleanup.record(db, activity_before, cid)
         return child
 
 
@@ -609,6 +630,7 @@ class ActionInput(BaseModel):
 @app.post("/api/containers/{cid}/actions")
 def action(cid: str, model: ActionInput):
     with database() as db:
+        activity_before = activity_cleanup.snapshot(db)
         c = get_container(db, cid)
         if model.action == 'third_instar' and c['kind'] not in ('vial', 'bottle'):
             raise HTTPException(409, 'third_instar_culture_required')
@@ -708,6 +730,7 @@ def action(cid: str, model: ActionInput):
                     e['cancel_reason'] = 'container_closed'
                     save_event(db, e)
         reconcile(db, c)
+        activity_cleanup.record(db, activity_before, cid)
         return c
 
 class EventInput(BaseModel):
@@ -920,6 +943,7 @@ class EggBatchInput(BaseModel):
 @app.post('/api/containers/{cid}/egg-batches')
 def new_egg_batch(cid: str, model: EggBatchInput):
     with database() as db:
+        activity_before = activity_cleanup.snapshot(db)
         c = get_container(db, cid)
         if c['kind'] != 'egg_laying' or c['status'] != 'active' or c['parents'] != 'present':
             raise HTTPException(409, 'egg_laying_unavailable')
@@ -934,6 +958,7 @@ def new_egg_batch(cid: str, model: EggBatchInput):
         due = model.lay_end.isoformat(timespec='minutes')
         save_event(db, {'id':uid(), 'container_id':cid, 'rule_key':f"custom-eggs-{batch['id']}", 'egg_batch_id':batch['id'], 'batch_label':batch['label'], 'kind':'egg_collect', 'due':due, 'end':due, 'critical':True, 'basis':'hours', 'title':'', 'status':'pending', 'pinned':True})
         log(db, cid, 'egg_window', now_of(db).isoformat(timespec='minutes'), batch['label'])
+        activity_cleanup.record(db, activity_before, cid)
         return batch
 
 class EggBatchAction(BaseModel):
@@ -945,6 +970,7 @@ class EggBatchAction(BaseModel):
 @app.post('/api/egg-batches/{bid}/actions')
 def egg_batch_action(bid: str, model: EggBatchAction):
     with database() as db:
+        activity_before = activity_cleanup.snapshot(db)
         batch = get_egg_batch(db, bid)
         if model.at > now_of(db) or model.at < parse(batch['lay_start']):
             raise HTTPException(422, 'invalid_action_time')
@@ -969,6 +995,7 @@ def egg_batch_action(bid: str, model: EggBatchAction):
                 if model.action == 'cancel' or (event['kind'] == 'egg_collect' and model.action == 'collect'):
                     event['status'] = 'cancelled' if model.action == 'cancel' else 'done'
                     save_event(db, event)
+        activity_cleanup.record(db, activity_before, batch['source_id'])
         return batch
 
 from . import ai_assistant, ai_models, workspace_restore

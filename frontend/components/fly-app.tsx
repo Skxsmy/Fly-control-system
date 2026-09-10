@@ -1,20 +1,21 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { Activity, ArrowRight, ArrowUpRight, Bot, CalendarDays, Check, ChevronLeft, ChevronRight, CircleCheck, Clock3, FlaskConical, LayoutDashboard, Leaf, ListFilter, MoreHorizontal, Plus, Search, Settings2, Snowflake, Sun, Thermometer, TriangleAlert, X } from 'lucide-react';
+import { Activity, ArrowRight, ArrowUpRight, Bot, CalendarDays, Check, ChevronLeft, ChevronRight, CircleCheck, Clock3, FlaskConical, LayoutDashboard, Leaf, ListFilter, MoreHorizontal, Plus, Search, Settings2, Snowflake, Sun, Thermometer, Trash2, TriangleAlert, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { EggSourceEstimate } from './egg-source-estimate';
 import { EggLayingFromForm } from './egg-laying-form';
 import { DeleteContainerForm } from './delete-container-form';
+import { DeleteActivityForm } from './delete-activity-form';
 import { VirginCollectionGuidance } from './virgin-collection-guidance';
 import { ActionForm, AvailabilityForm, ContainerForm, EggBatchForm, EggActionForm, Modal, Planner, ReminderForm, SettingsPage, type SettingsSection, windowsText } from './fly-forms';
 import { AssistantPage, resetAssistantSession } from './assistant-page';
 import { api } from '@/lib/api';
 import { isOverdue, occursOnDay, isTodayWork } from '@/lib/task-timing';
 import { fmtDate, fmtNumber, fmtTime, setLocale, t } from '@/lib/i18n';
-import type { AppState, Culture, Task, EggBatch } from '@/lib/types';
+import type { AppState, Culture, Task, EggBatch, ActivityRecord } from '@/lib/types';
 
 type Page = 'today' | 'containers' | 'calendar' | 'settings' | 'assistant';
-type DialogState = {kind: 'container'; source?: Culture; eggBatch?: EggBatch; mode?: 'transfer' | 'generation' | 'edit'} | {kind: 'action'; culture: Culture; action: string; event?: Task} | {kind: 'reminder'; event?: Task; cultureId?: string; date?: string; batch?: EggBatch} | {kind: 'availability'; date: string} | {kind: 'planner'; culture: Culture} | {kind: 'egg-batch'; culture: Culture} | {kind: 'egg-from'; culture: Culture} | {kind: 'delete'; culture: Culture} | {kind: 'egg-action'; batch: EggBatch; action: 'collect' | 'use' | 'cancel'};
+type DialogState = {kind: 'delete-activity'; culture: Culture; activity: ActivityRecord} | {kind: 'container'; source?: Culture; eggBatch?: EggBatch; mode?: 'transfer' | 'generation' | 'edit'} | {kind: 'action'; culture: Culture; action: string; event?: Task} | {kind: 'reminder'; event?: Task; cultureId?: string; date?: string; batch?: EggBatch} | {kind: 'availability'; date: string} | {kind: 'planner'; culture: Culture} | {kind: 'egg-batch'; culture: Culture} | {kind: 'egg-from'; culture: Culture} | {kind: 'delete'; culture: Culture} | {kind: 'egg-action'; batch: EggBatch; action: 'collect' | 'use' | 'cancel'};
 const genotype = (c: Culture) => c.purpose === 'cross' ? `${c.female_genotype} ♀ × ${c.male_genotype} ♂` : c.genotype || (c.genotype_review_required ? t('eggs.genotypeMissing') : '');
 const eggElapsed = (c: Culture, now: string) => c.status === 'planned' ? t('eggs.notStarted') : !c.setup_time ? t('eggs.timeMissing') : t('eggs.elapsedHours', {hours: fmtNumber(Math.max(0, (Date.parse(now + 'Z') - Date.parse(`${c.setup_date}T${c.setup_time}:00Z`)) / 3600000))});
 const taskTitle = (e: Task) => e.title || `${t(`task.${e.kind}`)}${e.batch_label ? ` · ${e.batch_label}` : ''}`;
@@ -104,6 +105,7 @@ export default function FlyApp() {
       {dialog.kind === 'container' && <ContainerForm state={state} source={dialog.source} mode={dialog.mode} eggBatch={dialog.eggBatch} close={() => setDialog(null)} saved={saved}/>}
       {dialog.kind === 'egg-from' && <EggLayingFromForm source={dialog.culture} state={state} close={() => setDialog(null)} saved={saved}/>}
       {dialog.kind === 'delete' && <DeleteContainerForm culture={dialog.culture} close={() => setDialog(null)} deleted={async()=>{await saved();setSelected(null);setDialog(null);}}/>}
+      {dialog.kind === 'delete-activity' && <DeleteActivityForm culture={dialog.culture} activity={dialog.activity} close={() => setDialog(null)} saved={saved}/>}
       {dialog.kind === 'action' && <ActionForm culture={dialog.culture} action={dialog.action} event={dialog.event} now={state.now} close={() => setDialog(null)} saved={saved}/>}
       {dialog.kind === 'reminder' && <ReminderForm state={state} event={dialog.event} cultureId={dialog.cultureId} date={dialog.date} batch={dialog.batch} close={() => setDialog(null)} saved={saved}/>}
       {dialog.kind === 'availability' && <AvailabilityForm state={state} day={dialog.date} close={() => setDialog(null)} saved={saved}/>}
@@ -170,7 +172,7 @@ function CultureDetails({culture: c, state, taskProps, dialog, select, askAssist
     {c.status === 'planned' && <div className="operation-grid"><Button onClick={() => dialog({kind: 'action', culture: c, action: 'activate'})}>{t(c.kind === 'egg_laying' ? 'eggs.recordStart' : 'action.activate')}</Button>{!hourly && <Button variant="outline" onClick={() => dialog({kind: 'planner', culture: c})}>{t('planner.setupFind')}</Button>}</div>}
     {!hourly && collectsVirgins && <VirginCollectionGuidance culture={c} now={state.now}/>}
     <section><div className="panel-title"><h3>{t('container.reminders')}</h3><Button variant="ghost" disabled={!['active', 'planned'].includes(c.status)} onClick={() => dialog({kind: 'reminder', cultureId: c.id})}><Plus size={16}/>{t('common.add')}</Button></div><label className="check-label subtle"><input type="checkbox" checked={history} onChange={e => setHistory(e.target.checked)}/>{t('task.history')}</label><TaskList {...taskProps} events={state.events.filter(e => e.container_id === c.id && (history || e.status === 'pending'))} showDate/></section>
-    <section><h3>{t('container.timeline')}</h3><div className="activity-list">{[...c.logs].reverse().map(log => <div key={log.id}><span className="activity-dot"/><div><strong>{t(`action.${log.action}`)}</strong>{log.notes && <p>{log.notes}</p>}<small>{fmtDate(log.at)} · {fmtTime(log.at)}</small></div></div>)}</div></section>
+    <section><h3>{t('container.timeline')}</h3><div className="activity-list">{[...c.logs].reverse().map(log => <div key={log.id}><span className="activity-dot"/><div className="activity-content"><strong>{t(`action.${log.action}`)}</strong>{log.notes && <p>{log.notes}</p>}<small>{fmtDate(log.at)} · {fmtTime(log.at)}</small></div>{log.action !== 'created' && <Button variant="ghost" size="icon" className="activity-delete" aria-label={t('activity.deleteNamed', {action: t(`action.${log.action}`)})} title={t('activity.delete')} onClick={() => dialog({kind: 'delete-activity', culture: c, activity: log})}><Trash2 size={16}/></Button>}</div>)}</div></section>
     {c.status === 'active' && <div className="archive-actions"><Button variant="outline" onClick={() => dialog({kind: 'action', culture: c, action: 'complete'})}>{t('action.complete')}</Button><Button variant="destructive" onClick={() => dialog({kind: 'action', culture: c, action: 'discard'})}>{t('action.discard')}</Button></div>}
     <div className="archive-actions"><Button variant="outline" onClick={()=>dialog({kind:'delete',culture:c})}>{t('delete.title')}</Button></div>
   </div>;

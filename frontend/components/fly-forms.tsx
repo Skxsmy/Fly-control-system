@@ -23,7 +23,7 @@ export function Field({label, hint, children}: {label: string; hint?: string; ch
   return <label className="field"><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>;
 }
 
-export function Form({submit, children, label, close}: {submit: (data: FormData) => Promise<unknown>; children: ReactNode; label?: string; close?: () => void}) {
+export function Form({submit, children, label, close, destructive = false}: {submit: (data: FormData) => Promise<unknown>; children: ReactNode; label?: string; close?: () => void; destructive?: boolean}) {
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const errorId = useId();
   async function onSubmit(event: SubmitEvent<HTMLFormElement>) {
@@ -34,7 +34,7 @@ export function Form({submit, children, label, close}: {submit: (data: FormData)
   }
   return <form onSubmit={onSubmit} className="fly-form" aria-busy={busy} aria-describedby={error ? errorId : undefined}>
     {children}{error && <p id={errorId} className="error" role="alert">{error}</p>}
-    <footer className="form-footer">{close && <Button type="button" variant="outline" onClick={close}>{t('common.cancel')}</Button>}<Button type="submit" disabled={busy}>{label || t('common.save')}{busy ? <span className="spinner"/> : <ArrowRight size={16}/>}</Button></footer>
+    <footer className="form-footer">{close && <Button type="button" variant="outline" onClick={close}>{t('common.cancel')}</Button>}<Button type="submit" variant={destructive ? 'destructive' : 'default'} disabled={busy}>{label || t('common.save')}{busy ? <span className="spinner"/> : <ArrowRight size={16}/>}</Button></footer>
   </form>;
 }
 
