@@ -5,15 +5,14 @@ import { Field } from './fly-forms';
 
 export function WorkflowFields({purpose, value, goal, setGoal}: {purpose: Culture['purpose']; value?: Workflow | null; goal: Workflow['cross_goal']; setGoal: (goal: Workflow['cross_goal']) => void}) {
   return <section className="form-section"><h3>{t('workflow.title')}</h3>
-    <p className="notice">{t(`workflow.${purpose}`)}</p>
     {purpose === 'cross' && <>
       <Field label={t('workflow.goal')}><select value={goal} onChange={e => setGoal(e.target.value as Workflow['cross_goal'])}>{['score','virgins','third_instar'].map(x => <option key={x} value={x}>{t(`workflow.${x}`)}</option>)}</select></Field>
-      <Field label={t('workflow.females')} hint={t('workflow.femalesHint')}><select name="workflow.female_virgins" defaultValue={value?.female_virgins || 'unconfirmed'}><option value="unconfirmed">{t('workflow.unconfirmed')}</option><option value="confirmed">{t('workflow.confirmed')}</option></select></Field>
+      <Field label={t('workflow.females')}><select name="workflow.female_virgins" defaultValue={value?.female_virgins || 'unconfirmed'}><option value="unconfirmed">{t('workflow.unconfirmed')}</option><option value="confirmed">{t('workflow.confirmed')}</option></select></Field>
       <Field label={t('workflow.target')}><input name="workflow.target_genotype" defaultValue={value?.target_genotype || ''} maxLength={1000}/></Field>
       <Field label={t('workflow.criteria')}><textarea name="workflow.selection_notes" defaultValue={value?.selection_notes || ''} maxLength={3000} rows={2}/></Field>
     </>}
     <label className="check-label"><input type="checkbox" name="workflow.transfer_enabled" defaultChecked={value?.transfer_enabled ?? purpose !== 'stock'}/>{t('workflow.transfer')}</label>
-    {purpose !== 'stock' && <Field label={t('workflow.removeDay')} hint={t('workflow.removeHint')}><input name="workflow.remove_day" type="number" min={1} max={30} required defaultValue={value?.remove_day || 5}/></Field>}
+    {purpose !== 'stock' && <Field label={t('workflow.removeDay')}><input name="workflow.remove_day" type="number" min={1} max={30} required defaultValue={value?.remove_day || 5}/></Field>}
     {purpose === 'cross' && goal === 'score' && <>
       <div className="form-grid"><Field label={t('workflow.selectionDay')}><input name="workflow.selection_day" type="number" min={1} max={90} required defaultValue={value?.selection_day || 10}/></Field>
       <Field label={t('workflow.selectionDays')}><input name="workflow.selection_days" type="number" min={1} max={14} required defaultValue={value?.selection_days || 1}/></Field>
@@ -21,10 +20,9 @@ export function WorkflowFields({purpose, value, goal, setGoal}: {purpose: Cultur
       <Field label={t('workflow.selectionEnd')}><input name="workflow.selection_end" type="time" required defaultValue={value?.selection_window[1] || '17:00'}/></Field></div>
       <label className="check-label"><input name="workflow.follow_eclosion" type="checkbox" defaultChecked={value?.follow_eclosion ?? true}/>{t('workflow.followEclosion')}</label>
     </>}
-    {(purpose === 'virgin' || (purpose === 'cross' && goal === 'virgins')) && <p className="notice">{t('workflow.singleDay')}</p>}
     {(purpose === 'larvae' || (purpose === 'cross' && goal === 'third_instar')) && <>
       <div className="form-grid">
-        <Field label={t('workflow.thirdInstarDay')} hint={t('workflow.thirdInstarDayHint')}><input name="workflow.third_instar_day" type="number" required min={1} max={90} defaultValue={value?.third_instar_day ?? 5}/></Field>
+        <Field label={t('workflow.thirdInstarDay')}><input name="workflow.third_instar_day" type="number" required min={1} max={90} defaultValue={value?.third_instar_day ?? 5}/></Field>
         <Field label={t('workflow.thirdInstarStart')}><input name="workflow.third_instar_start" type="time" required defaultValue={value?.third_instar_window?.[0] || '09:00'}/></Field>
         <Field label={t('workflow.thirdInstarEnd')}><input name="workflow.third_instar_end" type="time" required defaultValue={value?.third_instar_window?.[1] || '17:00'}/></Field>
       </div>

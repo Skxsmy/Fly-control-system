@@ -39,9 +39,8 @@ export function EggLayingFromForm({source, state, close, saved}: {
         </select>
       </Field>
       {adultSource && <>
-        <p className="notice">{t('eggs.selectedAdultsHint')}</p>
         {adultSource === 'offspring' && <EggSourceEstimate estimate={source.eclosion_estimate}/>}
-        <Field label={t('eggs.knownGenotype')} hint={t(source.purpose === 'cross' ? 'eggs.offspringGenotypeHint' : 'eggs.inheritedGenotypeHint')}>
+        <Field label={t('eggs.knownGenotype')}>
           <input key={adultSource} name="genotype" required maxLength={1000} defaultValue={source.purpose === 'cross' ? '' : source.genotype} list="egg-known-genotypes"/>
         </Field>
         <datalist id="egg-known-genotypes">{[...new Set(state.containers.map(c => c.genotype).filter(Boolean))].map(g => <option key={g} value={g} aria-label={g}/>)}</datalist>
@@ -55,14 +54,13 @@ export function EggLayingFromForm({source, state, close, saved}: {
             <Field label={t(status === 'planned' ? 'eggs.plannedStartDate' : 'eggs.actualStartDate')}><input name="setup_date" type="date" required min={source.setup_date} max={status === 'active' ? state.now.slice(0,10) : undefined} value={startDate} onInput={e => setStartDate(e.currentTarget.value)} onChange={e => setStartDate(e.target.value)}/></Field>
             <Field label={t(status === 'planned' ? 'eggs.plannedStartTime' : 'eggs.actualStartTime')}><input name="setup_time" type="time" required value={startTime} onInput={e => setStartTime(e.currentTarget.value)} onChange={e => setStartTime(e.target.value)}/></Field>
           </div>
-          <p className="subtle">{t(status === 'planned' ? 'eggs.plannedHint' : 'eggs.actualHint')}</p>
         </section>
         <div className="form-grid">
-          <Field label={t('container.id')} hint={t('container.autoId')}><input name="label" maxLength={80}/></Field>
-          <Field label={t('container.initialTemperature')} hint={t('eggs.sourceTemperatureHint')}><select name="initial_temperature" defaultValue="inherit"><option value="inherit">{t('eggs.sourceTemperature')}</option><option value="25">25°C</option><option value="18">18°C</option></select></Field>
+          <Field label={t('container.id')}><input name="label" maxLength={80} placeholder={t('container.autoId')}/></Field>
+          <Field label={t('container.initialTemperature')}><select name="initial_temperature" defaultValue="inherit"><option value="inherit">{t('eggs.sourceTemperature')}</option><option value="25">25°C</option><option value="18">18°C</option></select></Field>
         </div>
         <Field label={t('temperature.policy')}><select name="temperature_policy" defaultValue={source.temperature_policy}><option value="allowed">{t('temperature.allowed')}</option><option value="forbidden">{t('temperature.forbidden')}</option></select></Field>
-        <Field label={t('common.notes')} hint={t('eggs.copiedNotesHint')}><textarea name="notes" rows={3} maxLength={10000} defaultValue={source.notes}/></Field>
+        <Field label={t('common.notes')}><textarea name="notes" rows={3} maxLength={10000} defaultValue={source.notes}/></Field>
       </>}
     </Form>
   </Modal>;
