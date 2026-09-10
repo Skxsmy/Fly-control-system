@@ -112,6 +112,8 @@ Accepting a cooling plan creates handling reminders only. It does not fabricate 
 
 Automatic setup planning and cooling are included. Flexible rescheduling of other operations is manual, because this first version does not assume biological tolerance ranges for your protocols.
 
+The [experiment planner design proposal](docs/experiment-planner-design.md) describes researcher-authored L1/L3 workflows, backward scheduling across containers, and optional AI with switchable cloud/local connections. These are planned additions, not implemented features. Transgenesis remains deferred until the researcher defines its workflow.
+
 ## Data and backup
 
 - `data/flykeeper.db`: SQLite database containing all personal records and settings.
