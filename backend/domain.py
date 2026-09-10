@@ -95,15 +95,27 @@ def generated_events(container, temperatures):
         events[-1]['timing_review'] = interval['review']
         return events
     workflow = container.get('workflow')
+    third_instar = container['purpose'] == 'larvae' or (
+        container['purpose'] == 'cross' and workflow and workflow.get('cross_goal') == 'third_instar'
+    )
     if container["parents"] == "present" and container["transfer_index"] < template["max_transfers"] and (workflow is None or workflow['transfer_enabled']):
         due = origin + timedelta(days=template["transfer_day"])
         if not container.get("setup_time"):
             due = due.replace(hour=9)
         add("transfer", "transfer", due)
-    if workflow and container['purpose'] in ('cross', 'virgin') and container['parents'] == 'present':
+    if workflow and container['purpose'] in ('cross', 'virgin', 'larvae') and container['parents'] == 'present':
         due = (origin + timedelta(days=min(template['transfer_day'], workflow['remove_day']))).replace(hour=9, minute=0)
         end = (origin + timedelta(days=workflow['remove_day'])).replace(hour=17, minute=0)
         add('parents-remove', 'remove', due, end, critical=True)
+    if third_instar:
+        protocol = workflow or {}
+        day = origin.date() + timedelta(days=protocol.get('third_instar_day', 5))
+        window = protocol.get('third_instar_window', ['09:00', '17:00'])
+        due = datetime.combine(day, time.fromisoformat(window[0]))
+        end = datetime.combine(day, time.fromisoformat(window[1]))
+        # This is the user's provisional calendar target, not a temperature-derived stage prediction.
+        add('third_instar', 'third_instar', due, end, critical=True)
+        return events
     check = forecast(container, temperatures, template["check_day"]).replace(hour=9, minute=0)
     add("check", "tissue" if container["kind"] == "bottle" else "check", check, basis="development")
     if container["purpose"] == "stock":

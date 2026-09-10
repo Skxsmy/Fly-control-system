@@ -4,7 +4,7 @@ export type Template = {
   rate18: number; virgin_hours25: number; virgin_hours18: number;
 };
 export type Culture = {
-  id: string; label: string; kind: 'vial' | 'bottle' | 'petri_dish' | 'egg_laying'; purpose: 'stock' | 'cross' | 'virgin' | 'egg_laying' | 'dissection' | 'imaging' | 'other';
+  id: string; label: string; kind: 'vial' | 'bottle' | 'petri_dish' | 'egg_laying'; purpose: 'stock' | 'cross' | 'virgin' | 'larvae' | 'egg_laying' | 'dissection' | 'imaging' | 'other';
   genotype: string; female_genotype: string; male_genotype: string; setup_date: string; setup_time: string | null;
   initial_temperature: number; temperature: number; temperature_policy: string; notes: string; template: Template;
   cohort_id: string; transfer_index: number; source_id: string | null; parents: string; stage: string; status: string;
@@ -19,7 +19,7 @@ export type Culture = {
   workflow?: Workflow | null; first_eclosion_at?: string;
   incubation_window?: {start: string; end: string; review: boolean}; egg_age_hours?: number[];
 };
-export type Workflow = {cross_goal: 'score' | 'virgins'; transfer_enabled: boolean; remove_day: number; selection_day: number; selection_days: number; selection_window: string[]; target_genotype: string; selection_notes: string; female_virgins: 'unconfirmed' | 'confirmed'; follow_eclosion: boolean};
+export type Workflow = {cross_goal: 'score' | 'virgins' | 'third_instar'; third_instar_day?: number; third_instar_window?: string[]; transfer_enabled: boolean; remove_day: number; selection_day: number; selection_days: number; selection_window: string[]; target_genotype: string; selection_notes: string; female_virgins: 'unconfirmed' | 'confirmed'; follow_eclosion: boolean};
 export type EclosionEstimate = {at: string; basis: 'observed' | 'estimated'; source_planned: boolean; date_only?: boolean};
 export type Incubation = {lay_start: string; lay_end: string; min_hours: number; max_hours: number; reference_temperature: number; lay_temperature: number};
 export type EggBatch = {id: string; label: string; source_id: string; lay_start: string; lay_end: string; genotype: string; temperature: number; notes: string; status: 'planned' | 'collected' | 'cancelled'; collected_at: string | null; uses: {id: string; at: string; purpose: string; notes: string}[]};

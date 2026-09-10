@@ -46,6 +46,7 @@ The workspace starts empty. Tests use a separate temporary database; no demonstr
 | Virgin collection | Optional D3 parent transfer, a D3–D5 parent-removal window, D6 culture check, D9 eclosion watch, and the three windows on D10 only. |
 | Genetic cross: F1 selection/scoring | Parental handling and development checks, then one default F1 selection/scoring window on D10, 09:00–17:00. No automatic virgin-collection reminders. |
 | Genetic cross: F1 virgin collection | Parental handling and development checks, then the same single-day three-window collection schedule, with a recorded target F1 genotype/phenotype. |
+| Third-instar larval collection / cross targeting F1 third-instar larvae | Parental handling and one larval collection window on calendar D5, initially 09:00–17:00. |
 | Egg-laying container | Exact planned/actual start, source offspring eclosion checks when planned, and independent timed egg collections. |
 | Petri dish | Egg-age range and an hour-based first-instar estimate. |
 
@@ -56,6 +57,14 @@ The [University of Michigan cross protocol](https://bridgeslab.sph.umich.edu/pro
 On upgrade, stored collection-day counts become one. Extra pending automatic collection tasks are cancelled; completed history and event IDs are preserved. Cancelled tasks are hidden unless **Show history** is enabled, and do not display an active Critical badge. Existing containers otherwise retain their workflow until you enable **Use the purpose-specific workflow** in Edit. On an explicit workflow switch, manually pinned tasks whose rules disappear are retained as custom work; unchanged pinned rules are not duplicated.
 
 Collection windows are displayed as a single interval, such as **09:00–11:00**. The collection form evaluates the actual complete-clear clock at the entered operation time, including backdated records, and marks unknown, elapsed, or mixed-temperature intervals for assessment. Scheduled times and clock state do not verify individual virginity; collecting selected females alone does not reset the clock.
+
+## Third-instar larval collection
+
+Choose **Third-instar larval collection** as the purpose of a new vial/bottle, with a single known genotype. For a genetic cross, choose **F1 third-instar larvae** under **Cross outcome** and record the parental genotypes and target F1 criteria.
+
+The provisional default is **D5**, five calendar days after that container's setup date (D0), with one 09:00–17:00 collection window. For example, a September 23 setup produces a September 28 reminder. Edit **Third-instar collection day** and the window, or reschedule the individual reminder. This initial calendar rule does not shift with recorded temperature changes; adjust it for the experiment's actual conditions. A transferred destination has its own D0 and collection date.
+
+These workflows schedule parental handling followed by larval collection, without later D6 inspection, eclosion, scoring, or virgin-collection tasks. **Collect third-instar larvae** records the actual time and notes and completes the corresponding reminder. It is also available as a manual operation on other vials/bottles. It does not imply that all larvae were taken, remove adults, reset development, or end the culture.
 
 ## Egg-laying and hourly experiments
 

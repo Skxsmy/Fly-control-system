@@ -218,7 +218,7 @@ class Incubation(BaseModel):
 class ContainerInput(BaseModel):
     label: str = Field("", max_length=80)
     kind: Literal["vial", "bottle", "petri_dish", "egg_laying"] = "vial"
-    purpose: Literal["stock", "cross", "virgin", "egg_laying", "dissection", "imaging", "other"] = "cross"
+    purpose: Literal["stock", "cross", "virgin", "larvae", "egg_laying", "dissection", "imaging", "other"] = "cross"
     genotype: str = Field("", max_length=1000)
     female_genotype: str = Field("", max_length=1000)
     male_genotype: str = Field("", max_length=1000)
@@ -256,7 +256,7 @@ class ContainerInput(BaseModel):
                 raise ValueError('laying_purpose_required')
             if not self.setup_time:
                 raise ValueError('egg_setup_time_required')
-        elif self.purpose not in ('stock', 'cross', 'virgin'):
+        elif self.purpose not in ('stock', 'cross', 'virgin', 'larvae'):
             raise ValueError('invalid_purpose')
         if self.kind != 'petri_dish' and (self.incubation or self.egg_batch_id):
             raise ValueError('invalid_egg_source')
@@ -268,18 +268,20 @@ class ContainerInput(BaseModel):
         return self
 
 class Workflow(BaseModel):
-    cross_goal: Literal['score', 'virgins'] = 'score'
+    cross_goal: Literal['score', 'virgins', 'third_instar'] = 'score'
     transfer_enabled: bool = True
     remove_day: int = Field(5, ge=1, le=30)
     selection_day: int = Field(10, ge=1, le=90)
     selection_days: int = Field(1, ge=1, le=14)
     selection_window: list[str] = Field(default_factory=lambda: ['09:00', '17:00'], min_length=2, max_length=2)
+    third_instar_day: int = Field(5, ge=1, le=90)
+    third_instar_window: list[str] = Field(default_factory=lambda: ['09:00', '17:00'], min_length=2, max_length=2)
     target_genotype: str = Field('', max_length=1000)
     selection_notes: str = Field('', max_length=3000)
     female_virgins: Literal['unconfirmed', 'confirmed'] = 'unconfirmed'
     follow_eclosion: bool = True
 
-    @field_validator('selection_window')
+    @field_validator('selection_window', 'third_instar_window')
     @classmethod
     def valid_selection_window(cls, value):
         validate_windows([value])
@@ -597,7 +599,7 @@ def egg_laying_from_container(cid: str, model: EggLayingFromInput):
 
 
 class ActionInput(BaseModel):
-    action: Literal["remove", "clear", "collect", "tissue", "larvae", "pupae", "eclosion", "cold", "warm", "complete", "discard", "activate", "first_instar", "dissect", "image", "score"]
+    action: Literal["remove", "clear", "collect", "tissue", "larvae", "pupae", "eclosion", "cold", "warm", "complete", "discard", "activate", "first_instar", "dissect", "image", "score", "third_instar"]
     at: NaiveDatetime
     notes: str = Field("", max_length=10000)
     cleared: bool = False
@@ -607,6 +609,8 @@ class ActionInput(BaseModel):
 def action(cid: str, model: ActionInput):
     with database() as db:
         c = get_container(db, cid)
+        if model.action == 'third_instar' and c['kind'] not in ('vial', 'bottle'):
+            raise HTTPException(409, 'third_instar_culture_required')
         if c['kind'] == 'petri_dish' and model.action in ('remove', 'clear', 'collect', 'tissue'):
             raise HTTPException(409, 'use_egg_workflow')
         at = model.at.replace(tzinfo=None)
@@ -659,7 +663,7 @@ def action(cid: str, model: ActionInput):
                 c.update(genotype_review_required=False, setup_time_review_required=False)
             c["status"] = "active"
             c["setup_date"], c["setup_time"] = at.date().isoformat(), at.strftime("%H:%M")
-        if model.action == "clear" or model.cleared:
+        if model.action == "clear" or (model.cleared and model.action != 'third_instar'):
             if c["parents"] == "present":
                 c["parents"] = "removed"
             if model.action != "clear":
@@ -684,7 +688,7 @@ def action(cid: str, model: ActionInput):
                     continue
                 if model.action in ('collect', 'score') and not (parse(e['due']) <= at <= parse(e['end'])):
                     continue
-                if model.action in ('tissue', 'cold', 'warm', 'collect', 'first_instar', 'remove', 'eclosion', 'score', 'activate'):
+                if model.action in ('tissue', 'cold', 'warm', 'collect', 'first_instar', 'remove', 'eclosion', 'score', 'activate', 'third_instar'):
                     matches.append(e)
             if matches:
                 e = min(matches, key=lambda x: abs((parse(x['due']) - at).total_seconds()))

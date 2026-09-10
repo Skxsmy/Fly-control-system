@@ -8,7 +8,7 @@ import { endAfterMove } from '@/lib/reminder-window';
 import { WorkflowFields, workflowFrom } from './workflow-fields';
 import { VirginCollectionGuidance } from './virgin-collection-guidance';
 import { t, fmtDate, fmtTime, fmtNumber, weekday, availableLocales } from '@/lib/i18n';
-import type { AppState, Culture, Task, Template, Settings, Suggestions, EggBatch, Incubation } from '@/lib/types';
+import type { AppState, Culture, Task, Template, Settings, Suggestions, EggBatch, Incubation, Workflow } from '@/lib/types';
 
 export function Modal({title, description, children, close, wide = false}: {title: string; description?: string; children: ReactNode; close: () => void; wide?: boolean}) {
   return <Dialog open onOpenChange={open => !open && close()}><DialogContent showCloseButton={false} className={`fly-dialog ${wide ? 'wide' : ''}`}>
@@ -46,11 +46,12 @@ export const windowsText = (windows: string[][]) => windows.map(pair => pair.joi
 function fieldValue(form: FormData, key: string) {const value = form.get(key); return typeof value === 'string' ? value : '';}
 
 const templateNumbers: (keyof Template)[] = ['transfer_day', 'max_transfers', 'check_day', 'watch_day', 'collection_day', 'stock_interval', 'rate18', 'virgin_hours25', 'virgin_hours18'];
-export function ProtocolFields({template, purpose, goal}: {template: Template; purpose?: Culture['purpose']; goal?: 'score' | 'virgins'}) {
-  const collection = !purpose || purpose === 'virgin' || (purpose === 'cross' && goal !== 'score');
-  const keys = templateNumbers.filter(key => !purpose || (key === 'stock_interval' ? purpose === 'stock' : ['collection_day','virgin_hours25','virgin_hours18'].includes(key) ? collection : key === 'watch_day' ? purpose !== 'stock' : true));
+export function ProtocolFields({template, purpose, goal}: {template: Template; purpose?: Culture['purpose']; goal?: Workflow['cross_goal']}) {
+  const collection = !purpose || purpose === 'virgin' || (purpose === 'cross' && (!goal || goal === 'virgins'));
+  const larvae = purpose === 'larvae' || (purpose === 'cross' && goal === 'third_instar');
+  const keys = templateNumbers.filter(key => !larvae || ['transfer_day','max_transfers'].includes(key)).filter(key => !purpose || (key === 'stock_interval' ? purpose === 'stock' : ['collection_day','virgin_hours25','virgin_hours18'].includes(key) ? collection : key === 'watch_day' ? purpose !== 'stock' : true));
   return <div className="protocol-fields"><div className="form-grid">{keys.map(key => <Field key={key} label={t(`settings.${key}`)}><input name={`template.${key}`} type="number" required min={key === 'max_transfers' ? 0 : key === 'rate18' ? 0.01 : 1} max={key === 'rate18' ? 0.99 : undefined} step={key === 'rate18' ? 0.01 : 1} defaultValue={template[key] as number}/></Field>)}</div>
-    {collection && <><Field label={t('settings.windows')} hint={t('calendar.windowsHint')}><input name="template.windows" defaultValue={windowsText(template.windows)} required/></Field><p className="notice">{t('workflow.singleDay')}</p></>}<p className="subtle">{t('settings.rateHint')}</p></div>;
+    {collection && <><Field label={t('settings.windows')} hint={t('calendar.windowsHint')}><input name="template.windows" defaultValue={windowsText(template.windows)} required/></Field><p className="notice">{t('workflow.singleDay')}</p></>}{!larvae && <p className="subtle">{t('settings.rateHint')}</p>}</div>;
 }
 export function templateFrom(form: FormData, base?: Template): Template {
   const result: Record<string, unknown> = {...base, collection_days: 1};
@@ -105,7 +106,7 @@ export function ContainerForm({state, source, mode, eggBatch, close, saved}: {st
   const edit = mode === 'edit';
   const editableStart = !edit || source?.status === 'planned' || (kind === 'egg_laying' && source?.setup_time_review_required);
   const [useWorkflow, setUseWorkflow] = useState(!edit || !!source?.workflow);
-  const [crossGoal, setCrossGoal] = useState<'score' | 'virgins'>(source?.workflow?.cross_goal || (edit ? 'virgins' : 'score'));
+  const [crossGoal, setCrossGoal] = useState<Workflow['cross_goal']>(source?.workflow?.cross_goal || (edit ? 'virgins' : 'score'));
   return <Modal title={t(edit ? 'container.edit' : mode === 'transfer' ? 'container.transfer' : mode === 'generation' ? 'container.nextGeneration' : 'common.newContainer')} description={t(mode === 'transfer' ? 'container.transferHint' : mode === 'generation' ? 'container.generationHint' : kind === 'petri_dish' ? 'eggs.dishHint' : kind === 'egg_laying' ? 'eggs.containerHint' : 'container.newHint')} close={close} wide>
     <Form close={close} label={t(edit ? 'common.save' : 'common.create')} submit={async form => {
       const payload = {label: fieldValue(form, 'label'), kind, purpose, genotype: (fieldValue(form, 'genotype') || ''), female_genotype: (fieldValue(form, 'female_genotype') || ''), male_genotype: (fieldValue(form, 'male_genotype') || ''),
@@ -116,7 +117,7 @@ export function ContainerForm({state, source, mode, eggBatch, close, saved}: {st
     }}>
       <div className="form-grid"><Field label={t('container.id')} hint={edit ? undefined : t('container.autoId')}><input name="label" defaultValue={edit ? source?.label : ''} required={edit} maxLength={80}/></Field>
         {!edit && <Field label={t('container.type')}><select value={kind} onChange={e => {const next = e.target.value as Culture['kind']; setKind(next); if (next !== 'petri_dish') setBatchId(''); setPurpose(next === 'egg_laying' ? 'egg_laying' : next === 'petri_dish' ? 'dissection' : source?.purpose || 'cross');}}>{(mode ? ['vial', 'bottle'] : ['vial', 'bottle', 'petri_dish', 'egg_laying']).map(x => <option key={x} value={x}>{t(`kind.${x}`)}</option>)}</select></Field>}
-        {!edit && <Field label={t('container.purpose')}><select value={purpose} disabled={mode === 'transfer' || kind === 'egg_laying'} onChange={e => setPurpose(e.target.value as Culture['purpose'])}>{(kind === 'egg_laying' ? ['egg_laying'] : kind === 'petri_dish' ? ['dissection', 'imaging', 'other'] : ['cross', 'stock', 'virgin']).map(x => <option key={x} value={x}>{t(`purpose.${x}`)}</option>)}</select></Field>}
+        {!edit && <Field label={t('container.purpose')}><select value={purpose} disabled={mode === 'transfer' || kind === 'egg_laying'} onChange={e => setPurpose(e.target.value as Culture['purpose'])}>{(kind === 'egg_laying' ? ['egg_laying'] : kind === 'petri_dish' ? ['dissection', 'imaging', 'other'] : ['cross', 'stock', 'virgin', 'larvae']).map(x => <option key={x} value={x}>{t(`purpose.${x}`)}</option>)}</select></Field>}
         {!edit && <Field label={t('container.initialTemperature')}><select name="initial_temperature" defaultValue={source?.temperature || 25}><option value="25">25°C</option><option value="18">18°C</option></select></Field>}
       </div>
       {kind === 'petri_dish' && !edit && <Field label={t('eggs.source')}><select value={batchId} onChange={e => setBatchId(e.target.value)}><option value="">{t('eggs.external')}</option>{state.egg_batches.filter(b => b.status === 'collected').map(b => <option key={b.id} value={b.id}>{b.label}</option>)}</select></Field>}
@@ -152,6 +153,7 @@ export function ActionForm({culture, action, event, now, close, saved}: {culture
       <Field label={t('action.at')}><input name="at" type="datetime-local" value={actionTime} onInput={e => setActionTime(e.currentTarget.value)} onChange={e => setActionTime(e.target.value)} required min={action === 'activate' ? undefined : `${culture.setup_date}T${culture.setup_time || '00:00'}`} max={now.slice(0, 16)}/></Field>
       {action === 'activate' && culture.kind === 'egg_laying' && <p className="notice">{t('eggs.actualHint')}</p>}
       {action === 'collect' && <VirginCollectionGuidance culture={culture} now={now} actionTime={actionTime} compact/>}
+      {action === 'third_instar' && <p className="notice">{t('workflow.thirdInstarActionHint')}</p>}
       {action === 'score' && <p className="notice">{t('workflow.scoreHint')}{culture.workflow?.target_genotype ? ` ${culture.workflow.target_genotype}` : ''}</p>}
       {action === 'collect' && <label className="check-label"><input name="cleared" type="checkbox"/>{t('action.cleared')}</label>}
       {['clear', 'collect'].includes(action) && <p className="notice">{t('action.clearHint')}</p>}
