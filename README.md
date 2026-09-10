@@ -114,6 +114,8 @@ Automatic setup planning and cooling are included. Flexible rescheduling of othe
 
 The [experiment planner design proposal](docs/experiment-planner-design.md) describes researcher-authored L1/L3 workflows, backward scheduling across containers, and optional AI with switchable cloud/local connections. These are planned additions, not implemented features. Transgenesis remains deferred until the researcher defines its workflow.
 
+The standalone [assistant interaction prototype](docs/assistant-design.html) demonstrates editing an experiment and its attached assistant panel. Open it in a browser; it uses fictional examples and keeps edits in memory only. It does not connect a model or change laboratory records. See the [interaction design](docs/assistant-interaction-design.md) for the walkthrough and implementation boundaries.
+
 ## Data and backup
 
 - `data/flykeeper.db`: SQLite database containing all personal records and settings.

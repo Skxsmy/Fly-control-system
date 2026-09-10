@@ -26,6 +26,8 @@ Other required additions:
 
 ## User-facing workflow
 
+The screen content follows the project's UI conventions in `AGENTS.md`. This document explains the engineering design; its paragraphs are not interface copy. Show concrete experiment data and controls. Place missing inputs and actionable conflicts beside the affected step; expose supporting evidence when requested. Do not fill screens with product contracts, architecture, blanket caveats, or explanations of prior corrections.
+
 Add an **Experiments** area with **New experiment** and **Workflow library**.
 
 1. **Target**: select the intended operation, genotype, stage/substage, desired quantity, target date/window, and expected hands-on duration. Unspecified quantity remains unknown. Clarify whether the target is an operation start, a whole work session, or a deadline.
