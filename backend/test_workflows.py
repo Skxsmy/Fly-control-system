@@ -122,7 +122,7 @@ def test_stock_maintenance_has_no_parental_cross_or_collection_schedule(workflow
 
 def test_egg_and_dish_workflows_do_not_inherit_f1_or_virgin_tasks(workflow_client):
     client, clock = workflow_client
-    cage = new_culture(client, purpose="egg_laying", kind="egg_laying")
+    cage = new_culture(client, purpose="egg_laying", kind="egg_laying", genotype="w1118")
     assert events_for(client, cage) == []
     clock["now"] = datetime(2026, 9, 1, 15)
     dish = new_culture(client, purpose="dissection", kind="petri_dish", genotype="w1118",

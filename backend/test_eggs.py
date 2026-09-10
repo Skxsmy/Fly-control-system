@@ -5,7 +5,7 @@ from backend.test_app import client, create, snapshot
 from backend import app as module
 
 def laying(client):
-    return create(client, kind='egg_laying', purpose='egg_laying')
+    return create(client, kind='egg_laying', purpose='egg_laying', genotype='w1118')
 
 def batch(client, source, **changes):
     response = client.post(f"/api/containers/{source['id']}/egg-batches", json={

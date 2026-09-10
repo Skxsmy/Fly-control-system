@@ -55,6 +55,18 @@ def forecast(container, temperatures, target):
         cursor, current = point, segment["temperature"]
     return cursor + timedelta(days=max(0, target - accumulated) / rate(current, container["template"]))
 
+def eclosion_estimate(container, temperatures):
+    """Expose an observation when available, otherwise the culture's configured estimate."""
+    if container['kind'] not in ('vial', 'bottle'):
+        return None
+    observed = container.get('first_eclosion_at')
+    return {
+        'at': observed or forecast(container, temperatures, container['template']['collection_day']).isoformat(timespec='minutes'),
+        'basis': 'observed' if observed else 'estimated',
+        'source_planned': container['status'] == 'planned',
+        'date_only': not bool(observed or container.get('setup_time')),
+    }
+
 def generated_events(container, temperatures):
     if container["status"] not in ("active", "planned"):
         return []
@@ -66,7 +78,17 @@ def generated_events(container, temperatures):
                        "end": (end or due).isoformat(timespec="minutes"), "critical": critical,
                        "basis": basis, "title": ""})
     if container['kind'] == 'egg_laying':
-        return []  # Each timed egg collection has its own reminder.
+        if container['status'] == 'planned':
+            if container.get('setup_time'):
+                add('egg-setup', 'egg_setup', origin, critical=True)
+            estimate = container.get('source_eclosion_estimate')
+            if container.get('adult_source') == 'offspring' and estimate and estimate['basis'] == 'estimated':
+                ready = parse(estimate['at'])
+                if estimate.get('date_only'):
+                    windows = container.get('source_collection_windows', template['windows'])
+                    ready = datetime.combine(ready.date(), time.fromisoformat(windows[0][0]))
+                add('offspring-ready', 'offspring_ready', ready, critical=True, basis='development')
+        return events  # Each timed egg collection has its own reminder.
     if container['kind'] == 'petri_dish':
         interval = incubation_window(container, temperatures)
         add('first-instar', 'first_instar', parse(interval['start']), parse(interval['end']), True, 'hours')

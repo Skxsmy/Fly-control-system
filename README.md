@@ -15,7 +15,7 @@ For a fresh installation, install Python 3.13+ and Node.js 22.13+, then run `Set
 ## First workflow
 
 1. Open **Protocols & settings**. Set the laboratory time zone and weekly availability before recording cultures. Date-specific overrides are edited in **Calendar**.
-2. Choose **New container**. Choose vial, bottle, Petri dish, or egg-laying container. Enter purpose, genotype(s), and setup date. Time is optional for ordinary fly cultures and required for Petri dishes. Each record has a unique human-readable ID.
+2. Choose **New container**. Choose vial, bottle, Petri dish, or egg-laying container. Enter purpose, genotype(s), and setup date. Time is optional for ordinary fly cultures and required for Petri dishes and egg-laying containers. Each record has a unique human-readable ID.
 3. Open a container to transfer parents, establish a new generation, record observations, collect females, clear adults, or record an actual temperature move.
 4. Use **Today** for pending and overdue work. Each collection window is a separate task. Completion, skip, disable, reschedule, and restore are available per reminder.
 5. For a planned culture, **Find a setup date** suggests available starts. For an active cross, **Find a cooling plan** searches for an approximate minimal cold interval.
@@ -46,7 +46,7 @@ The workspace starts empty. Tests use a separate temporary database; no demonstr
 | Virgin collection | Optional D3 parent transfer, a D3–D5 parent-removal window, D6 culture check, D9 eclosion watch, and the three windows on D10 only. |
 | Genetic cross: F1 selection/scoring | Parental handling and development checks, then one default F1 selection/scoring window on D10, 09:00–17:00. No automatic virgin-collection reminders. |
 | Genetic cross: F1 virgin collection | Parental handling and development checks, then the same single-day three-window collection schedule, with a recorded target F1 genotype/phenotype. |
-| Egg-laying container | Independent timed egg collections. |
+| Egg-laying container | Exact planned/actual start, source offspring eclosion checks when planned, and independent timed egg collections. |
 | Petri dish | Egg-age range and an hour-based first-instar estimate. |
 
 The cross form records parental female virgin status, target F1 genotype/phenotype, and selection criteria. These are researcher-entered facts, not automatically inferred genetic outcomes. **Record F1 selection/scoring** logs phenotypes, sex, and counts in notes without classifying flies as virgin. **Observe eclosion** records the first observed F1 eclosion time and completes an associated watch task. F1 scoring can follow that observed date; virgin collection remains on its configured culture day. The editable parent-removal window ends at 17:00 on default D5, starts on the earlier of the transfer day or removal day, and disappears after parents leave. D0 and offspring development remain unchanged.
@@ -59,8 +59,8 @@ Collection windows are displayed as a single interval, such as **09:00–11:00**
 
 ## Egg-laying and hourly experiments
 
-1. Create an **Egg-laying container** with the female and male genotypes. This record holds the parents and can produce multiple egg collections. It does not inherit vial D3/D6/D10 reminders.
-2. Open **New egg collection**. Give the batch a label, expected or verified egg genotype, temperature, and laying start/end timestamps. A collection reminder is created for the end of the window. A parental cross description is retained as text and is not interpreted as a genetic prediction.
+1. Create an **Egg-laying container** with one **Known adult genotype** and an exact start date and time. The adults have already been selected; this is not a new genetic cross. The container can produce multiple egg collections and does not inherit vial D3/D6/D10 reminders.
+2. Open **New egg collection**. Give the batch a label, expected or verified egg genotype, temperature, and laying start/end timestamps. A collection reminder is created for the end of the window. The known adult genotype is prefilled; record the appropriate egg genotype for the batch.
 3. After the laying window has ended, use **Record egg collection** with the actual pickup time. The laying interval and collection time are separate facts.
 4. Use **Prepare Petri dish** for an aliquot. The dish retains the source batch and its laying interval. Multiple dishes can share a source batch; setting up a dish does not reset egg age. External eggs can instead be entered manually in a new Petri dish.
 5. For direct imaging, choose **Record egg use** on the batch. This does not require a dish and does not consume/close other aliquots. **Add reminder** can schedule imaging or another use. Quantities and allocation details are recorded in notes, not enforced as an inventory balance.
@@ -69,14 +69,17 @@ Collection windows are displayed as a single interval, such as **09:00–11:00**
 
 ### Start egg laying from an existing vial or bottle
 
-Open an active vial/bottle and choose **Create egg-laying container** under **Linked egg-laying containers**. Select which adults you are using:
+Open a vial/bottle and choose **Create egg-laying container** under **Linked egg-laying containers**. Choose **Parents** or **Offspring**. You decide which and how many adults to select. Both options preserve the source's parent status, developing offspring, and pending transfer/removal reminders. Record a complete removal or clear separately if that is what you actually performed.
 
-- **Move all original parents** retains their cohort and increments the transfer count. It requires parents to be present and below the source protocol's transfer limit. Saving records them as transferred and completes a pending parent-transfer reminder. Developing offspring and other source reminders keep their existing timeline.
-- **Select offspring from this culture** starts a new cohort with transfer count zero. Source parent state and reminders are preserved. If you completely clear the source, record that separately.
+Parents retain their cohort and increment the selected adults' transfer count in the destination. This selection is not blocked by the ordinary vial transfer limit or the source's recorded parent status. Offspring start a new cohort with transfer count zero. Enter one established adult genotype. Stock/virgin genotype text is prefilled for review; a genetic cross is not converted into an assumed genotype. Notes and temperature policy are copied and remain editable in the new record.
 
-Stock/virgin genotype text is prefilled for both sexes; verify the selected flies. A parental cross is copied when moving its original parents. When selecting cross offspring, enter their actual genotypes; the app does not infer Mendelian outcomes. Genotypes and notes can be edited for the new record without changing the source. The temperature policy and protocol defaults are inherited; the default setup temperature follows the source's recorded temperature at the new setup time, with an explicit override available.
+Choose **Started — record actual time** for an operation already performed, or **Planned — start later** to prepare in advance. Date and time are required in both cases. Offspring selection defaults to planning and displays the source's approximate eclosion forecast, including recorded temperature changes, or its first observed eclosion time when available. A planned source can also supply a planned offspring experiment.
 
-The new record has an independent D0, no copied observations, temperature history, egg batches, or vial-cycle reminders. Actual setup must be between source setup and now. The source and destination link to each other; the destination records whether its adults were original parents or selected offspring. Continue with **New egg collection**, then Petri dishes or direct egg use as above. Partial transfers of original parents and combining adults from multiple source containers are not yet modeled by this shortcut.
+A planned egg container has a start reminder and, until source eclosion is observed, a separate source-offspring check. Moving or completing a reminder does not automatically start egg laying. Even when time passes beyond the planned start, the container remains planned. **Record actual start** records the actual placement time and enables **New egg collection**; each batch then has its own laying start/end. The source check follows its forecast unless manually rescheduled. Forecasts are planning estimates and do not establish genotype or adult suitability for egg laying.
+
+The default setup temperature uses the source history at the actual start; an explicit destination temperature overrides inheritance. Each destination has its own exact start and hourly elapsed-time display, without copying source observations, egg batches, or culture-cycle reminders. The source and destination link to each other. Combining adults from multiple source containers is not modeled as multiple lineage links; details can be recorded in notes.
+
+On upgrade, older egg-laying records with matching female/male genotypes receive that single genotype. Ambiguous genotypes and missing start times are flagged for review before new egg batches can be added. Existing parental fields, batches, observations, and source status changes are preserved. Edit the record to supply the known genotype and any missing actual start time; the corrected time must precede recorded activity and laying windows.
 
 The [JoVE timed-collection protocol](https://www.jove.com/v/20076/drosophila-burrowing-tunneling-assay-method-to-assess-tissue-hypoxia) describes a four-hour laying period and incubation at 25°C, with most larvae hatched by the following afternoon. Its video summary also describes a 24-hour incubation after timed collection. The software's 24–30-hour preset combines a practical starting estimate with the researcher's requested approximate 30-hour timing; it is not a measured confidence interval from that publication. Genotype, culture conditions, and the width of the laying window require local calibration.
 

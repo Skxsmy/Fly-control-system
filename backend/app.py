@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, NaiveDatetime, field_validator, model_validator
 from .domain import (DEFAULT_SETTINGS, DEFAULT_TEMPLATE, start_of, parse, effective_age,
-                     generated_events, event_conflict, virgin_clock, suggest_cooling, incubation_window)
+                     generated_events, event_conflict, virgin_clock, suggest_cooling, incubation_window, eclosion_estimate)
 from .container_cleanup import preview_container_deletion, delete_container_permanently, next_container_label
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -68,6 +68,24 @@ def init_db():
                 value['template']['collection_days'] = 1
                 db.execute('UPDATE containers SET payload=? WHERE id=?', (dump(value), row['id']))
             db.execute("INSERT INTO meta VALUES('single_day_collection_v1','1')")
+        if not db.execute("SELECT 1 FROM meta WHERE key='known_egg_adults_v1'").fetchone():
+            for row in db.execute('SELECT id,payload FROM containers').fetchall():
+                value = json.loads(row['payload'])
+                if value['kind'] != 'egg_laying':
+                    continue
+                known = value.get('genotype', '').strip()
+                female, male = value.get('female_genotype', '').strip(), value.get('male_genotype', '').strip()
+                if not known and female and female == male:
+                    known = female
+                value['genotype'] = known
+                value['genotype_review_required'] = not bool(known)
+                value['setup_time_review_required'] = not bool(value.get('setup_time'))
+                relation = value.get('source_relation')
+                if relation in ('egg_laying_transfer', 'egg_laying_generation'):
+                    value['adult_source'] = 'parents' if relation == 'egg_laying_transfer' else 'offspring'
+                # Preserve historical parent fields and source changes; their meaning cannot be inferred safely.
+                db.execute('UPDATE containers SET payload=? WHERE id=?', (dump(value), row['id']))
+            db.execute("INSERT INTO meta VALUES('known_egg_adults_v1','1')")
 
 init_db()
 
@@ -93,6 +111,14 @@ def save_container(db, container):
 def temperatures_of(db, cid):
     return [dict(x) for x in db.execute("SELECT * FROM temperatures WHERE container_id=? ORDER BY at", (cid,))]
 
+def temperature_at(db, container, at):
+    current = container['initial_temperature']
+    for segment in temperatures_of(db, container['id']):
+        if parse(segment['at']) > at:
+            break
+        current = segment['temperature']
+    return current
+
 def logs_of(db, cid):
     return [dict(x) for x in db.execute("SELECT * FROM logs WHERE container_id=? ORDER BY at", (cid,))]
 
@@ -114,7 +140,12 @@ def reconcile(db, container):
             window = windows[index] if old['pinned'] and index < len(windows) else [old['due'][11:16], old['end'][11:16]]
             old['rule_key'] = f'collect-{parts[1]}-{window[0]}-{window[1]}'
             save_event(db, old)
-    generated = generated_events(container, temperatures_of(db, container["id"]))
+    generation_input = container
+    if container['kind'] == 'egg_laying' and container.get('source_id'):
+        source = get_container(db, container['source_id'])
+        generation_input = {**container, 'source_eclosion_estimate': eclosion_estimate(source, temperatures_of(db, source['id'])),
+                            'source_collection_windows': source['template']['windows']}
+    generated = generated_events(generation_input, temperatures_of(db, container["id"]))
     existing = {x["rule_key"]: json.loads(x["payload"]) for x in db.execute("SELECT * FROM events WHERE container_id=?", (container["id"],))}
     expected = {e["rule_key"] for e in generated}
     for raw in generated:
@@ -223,11 +254,13 @@ class ContainerInput(BaseModel):
         elif self.kind == 'egg_laying':
             if self.purpose != 'egg_laying':
                 raise ValueError('laying_purpose_required')
+            if not self.setup_time:
+                raise ValueError('egg_setup_time_required')
         elif self.purpose not in ('stock', 'cross', 'virgin'):
             raise ValueError('invalid_purpose')
         if self.kind != 'petri_dish' and (self.incubation or self.egg_batch_id):
             raise ValueError('invalid_egg_source')
-        if self.purpose in ('cross', 'egg_laying'):
+        if self.purpose == 'cross':
             if not self.female_genotype.strip() or not self.male_genotype.strip():
                 raise ValueError("parent_genotypes_required")
         elif not self.genotype.strip():
@@ -257,6 +290,9 @@ ContainerInput.model_rebuild()
 
 def create_container(db, model, parent=None, same_cohort=False):
     value = model.model_dump(mode="json")
+    if value['kind'] == 'egg_laying':
+        value.update(genotype=value['genotype'].strip(), female_genotype='', male_genotype='',
+                     genotype_review_required=False, setup_time_review_required=False)
     if value['workflow'] is None and value['kind'] in ('vial', 'bottle'):
         value['workflow'] = Workflow(transfer_enabled=value['purpose'] != 'stock').model_dump(mode='json')
     cid = uid()
@@ -272,7 +308,9 @@ def create_container(db, model, parent=None, same_cohort=False):
                  source_id=parent["id"] if parent else None,
                  status=('planned' if future else 'active') if initial_status == 'auto' else initial_status)
     if parent:
-        value.update(parents='present', stage='unobserved', status='active')
+        value.update(parents='present', stage='unobserved')
+        if value['kind'] != 'egg_laying':
+            value['status'] = 'active'
     if value['kind'] == 'petri_dish':
         if value['egg_batch_id']:
             batch = get_egg_batch(db, value['egg_batch_id'])
@@ -334,6 +372,13 @@ def state():
             c["calendar_day"] = (now.date() - date.fromisoformat(c["setup_date"])).days
             c["effective_age"] = round(effective_age(c, temps, now), 1)
             c["clock"] = virgin_clock(c, temps, c["logs"], now)
+            if c['kind'] in ('vial', 'bottle'):
+                c['eclosion_estimate'] = eclosion_estimate(c, temps)
+            if c['kind'] == 'egg_laying':
+                c['genotype_review_required'] = not bool(c.get('genotype', '').strip())
+                c['setup_time_review_required'] = not bool(c.get('setup_time'))
+                source = next((item for item in containers if item['id'] == c.get('source_id')), None)
+                c['source_eclosion_estimate'] = eclosion_estimate(source, temperatures_of(db, source['id'])) if source else None
             if c['kind'] == 'petri_dish':
                 c['incubation_window'] = incubation_window(c, temps)
                 c['egg_age_hours'] = [round((now - parse(c['incubation'][key])).total_seconds()/3600, 1) for key in ('lay_end', 'lay_start')]
@@ -401,12 +446,44 @@ def edit_container(cid: str, model: EditContainer):
         changes['label'] = changes['label'].strip()
         if not changes["label"].strip():
             raise HTTPException(422, "invalid_label")
-        if c["purpose"] in ('cross', 'egg_laying') and (not changes["female_genotype"].strip() or not changes["male_genotype"].strip()):
+        if c["purpose"] == 'cross' and (not changes["female_genotype"].strip() or not changes["male_genotype"].strip()):
             raise HTTPException(422, "parent_genotypes_required")
-        if c["purpose"] not in ('cross', 'egg_laying') and not changes["genotype"].strip():
+        if c["purpose"] != 'cross' and not changes["genotype"].strip():
             raise HTTPException(422, "genotype_required")
         if c["status"] == "planned" and model.setup_date:
-            changes.update(setup_date=model.setup_date.isoformat(), setup_time=model.setup_time)
+            changes.update(setup_date=model.setup_date.isoformat(), setup_time=model.setup_time if 'setup_time' in model.model_fields_set else c.get('setup_time'))
+        if c['kind'] == 'egg_laying':
+            changes['genotype'] = changes['genotype'].strip()
+            if 'setup_time' in model.model_fields_set and not model.setup_time:
+                raise HTTPException(422, 'egg_setup_time_required')
+            if c['status'] != 'planned' and c.get('setup_time'):
+                if ((model.setup_date and model.setup_date.isoformat() != c['setup_date']) or
+                        (model.setup_time and model.setup_time != c['setup_time'])):
+                    raise HTTPException(422, 'invalid_action_time')
+            # The old parent strings remain historical context until explicitly corrected.
+            changes.update(female_genotype=c.get('female_genotype', ''), male_genotype=c.get('male_genotype', ''))
+            if c['status'] == 'planned' and 'setup_time' in model.model_fields_set:
+                changes['setup_time'] = model.setup_time
+            if c['status'] != 'planned' and not c.get('setup_time'):
+                if model.setup_date and model.setup_date.isoformat() != c['setup_date']:
+                    raise HTTPException(422, 'invalid_action_time')
+                changes['setup_time'] = model.setup_time
+                proposed = {**c, **changes}
+                at = start_of(proposed)
+                if at > now_of(db):
+                    raise HTTPException(422, 'invalid_action_time')
+                recorded = [parse(item['at']) for item in logs_of(db, cid) if item['action'] != 'created']
+                recorded += [parse(item['at']) for item in temperatures_of(db, cid)]
+                recorded += [parse(json.loads(row[0])['lay_start']) for row in db.execute('SELECT payload FROM egg_batches WHERE source_id=?', (cid,))]
+                if any(at > stamp for stamp in recorded):
+                    raise HTTPException(422, 'egg_setup_after_recorded_activity')
+            if not changes.get('setup_time', c.get('setup_time')):
+                raise HTTPException(422, 'egg_setup_time_required')
+            if c.get('source_id'):
+                source = get_container(db, c['source_id'])
+                if start_of({**c, **changes}) < start_of(source):
+                    raise HTTPException(422, 'invalid_action_time')
+            changes.update(genotype_review_required=False, setup_time_review_required=False)
         c.update(changes)
         if c['kind'] == 'petri_dish' and model.incubation:
             protocol = model.incubation.model_dump(mode='json')
@@ -459,12 +536,12 @@ def transfer(cid: str, model: TransferInput):
         return child
 
 class EggLayingFromInput(BaseModel):
-    cohort_mode: Literal['transfer', 'generation']
+    adult_source: Literal['parents', 'offspring']
+    genotype: str = Field(min_length=1, max_length=1000)
     label: str = Field('', max_length=80)
     setup_date: date
-    setup_time: str | None = None
-    female_genotype: str | None = Field(None, max_length=1000)
-    male_genotype: str | None = Field(None, max_length=1000)
+    setup_time: str
+    initial_status: Literal['active', 'planned'] = 'active'
     initial_temperature: Literal[18, 25] | None = None
     temperature_policy: Literal['allowed', 'forbidden'] | None = None
     notes: str | None = Field(None, max_length=10000)
@@ -472,7 +549,17 @@ class EggLayingFromInput(BaseModel):
     @field_validator('setup_time')
     @classmethod
     def valid_time(cls, value):
-        return ContainerInput.valid_time(value)
+        value = ContainerInput.valid_time(value)
+        if not value:
+            raise ValueError('egg_setup_time_required')
+        return value
+
+    @field_validator('genotype')
+    @classmethod
+    def known_genotype(cls, value):
+        if not value.strip():
+            raise ValueError('genotype_required')
+        return value.strip()
 
 
 @app.post('/api/containers/{cid}/egg-laying')
@@ -481,45 +568,31 @@ def egg_laying_from_container(cid: str, model: EggLayingFromInput):
         source = get_container(db, cid)
         if source['kind'] not in ('vial', 'bottle'):
             raise HTTPException(409, 'egg_laying_source_required')
-        if source['status'] != 'active':
+        planned = model.initial_status == 'planned'
+        if source['status'] != 'active' and not (source['status'] == 'planned' and planned and model.adult_source == 'offspring'):
             raise HTTPException(409, 'container_inactive')
-        at = parse(model.setup_date.isoformat() + 'T' + (model.setup_time or '00:00'))
-        if at < start_of(source) or at > now_of(db):
+        at = parse(model.setup_date.isoformat() + 'T' + model.setup_time)
+        if at < start_of(source) or (not planned and at > now_of(db)):
             raise HTTPException(422, 'invalid_action_time')
-        same = model.cohort_mode == 'transfer'
-        if same and (source['parents'] != 'present' or source['transfer_index'] >= source['template']['max_transfers']):
-            raise HTTPException(409, 'transfer_unavailable')
-        # Cross offspring require an explicit genotype; parental strings are not a prediction.
-        defaults = (source['female_genotype'], source['male_genotype']) if same and source['purpose'] == 'cross' else (
-            ('', '') if source['purpose'] == 'cross' else (source['genotype'], source['genotype']))
-        female = model.female_genotype if model.female_genotype is not None else defaults[0]
-        male = model.male_genotype if model.male_genotype is not None else defaults[1]
-        if not female.strip() or not male.strip():
-            raise HTTPException(422, 'parent_genotypes_required')
-        temperature = source['initial_temperature']
-        for move in temperatures_of(db, cid):
-            if parse(move['at']) <= at:
-                temperature = move['temperature']
+        same = model.adult_source == 'parents'
+        temperature = temperature_at(db, source, at)
         child = create_container(db, ContainerInput(
             label=model.label, kind='egg_laying', purpose='egg_laying',
-            female_genotype=female.strip(), male_genotype=male.strip(),
+            genotype=model.genotype,
             setup_date=model.setup_date, setup_time=model.setup_time,
+            initial_status=model.initial_status,
             initial_temperature=model.initial_temperature if model.initial_temperature is not None else temperature,
             temperature_policy=model.temperature_policy if model.temperature_policy is not None else source['temperature_policy'],
             notes=model.notes if model.notes is not None else source['notes'], template=source['template'],
         ), source, same)
-        child['source_relation'] = 'egg_laying_' + model.cohort_mode
+        child['adult_source'] = model.adult_source
+        child['source_relation'] = 'egg_laying_' + model.adult_source
+        child['inherit_source_temperature'] = model.initial_temperature is None
         save_container(db, child)
-        if same:
-            source['parents'] = 'transferred'
-            save_container(db, source)
-            for row in db.execute("SELECT payload FROM events WHERE container_id=? AND rule_key='transfer'", (cid,)).fetchall():
-                event = json.loads(row[0])
-                if event['status'] == 'pending':
-                    event['status'] = 'done'
-                    save_event(db, event)
-            reconcile(db, source)
-        log(db, cid, child['source_relation'], at.isoformat(timespec='minutes'), child['label'])
+        reconcile(db, child)
+        # Selecting adults never asserts that every parent was moved or completes source work.
+        if not planned:
+            log(db, cid, child['source_relation'], at.isoformat(timespec='minutes'), child['label'])
         return child
 
 
@@ -539,6 +612,8 @@ def action(cid: str, model: ActionInput):
         at = model.at.replace(tzinfo=None)
         if (at < start_of(c) and model.action != "activate") or at > now_of(db) + timedelta(minutes=1):
             raise HTTPException(422, "invalid_action_time")
+        if c['kind'] == 'egg_laying' and model.action == 'activate' and at > now_of(db):
+            raise HTTPException(422, 'invalid_action_time')
         if c["status"] not in ("active", "planned"):
             raise HTTPException(409, "container_inactive")
         if c["status"] == "planned" and model.action != "activate":
@@ -566,6 +641,22 @@ def action(cid: str, model: ActionInput):
         elif model.action == "activate":
             if c['kind'] == 'petri_dish' and at < parse(c['incubation']['lay_end']):
                 raise HTTPException(422, 'egg_window_after_setup')
+            if c['kind'] == 'egg_laying':
+                if not c.get('genotype', '').strip():
+                    raise HTTPException(409, 'egg_genotype_review_required')
+                if c.get('source_id'):
+                    source = get_container(db, c['source_id'])
+                    if source['status'] != 'active':
+                        raise HTTPException(409, 'container_inactive')
+                    if at < start_of(source):
+                        raise HTTPException(422, 'invalid_action_time')
+                    if c.get('adult_source') == 'parents':
+                        c.update(cohort_id=source['cohort_id'], transfer_index=source['transfer_index'] + 1)
+                    if c.get('inherit_source_temperature', False):
+                        c['initial_temperature'] = temperature_at(db, source, at)
+                    if c.get('adult_source') in ('parents', 'offspring'):
+                        log(db, source['id'], 'egg_laying_' + c['adult_source'], stamp, c['label'])
+                c.update(genotype_review_required=False, setup_time_review_required=False)
             c["status"] = "active"
             c["setup_date"], c["setup_time"] = at.date().isoformat(), at.strftime("%H:%M")
         if model.action == "clear" or model.cleared:
@@ -580,7 +671,7 @@ def action(cid: str, model: ActionInput):
             if not row:
                 raise HTTPException(404, "event_not_found")
             e = json.loads(row[0])
-            if e["status"] != "pending" or ('eclosion' if e['kind'] == 'watch' else e['kind']) != model.action:
+            if e["status"] != "pending" or {'watch': 'eclosion', 'egg_setup': 'activate'}.get(e['kind'], e['kind']) != model.action:
                 raise HTTPException(409, "event_action_mismatch")
             e["status"] = "done"
             save_event(db, e)
@@ -589,11 +680,11 @@ def action(cid: str, model: ActionInput):
             matches = []
             for row in db.execute('SELECT payload FROM events WHERE container_id=?', (cid,)).fetchall():
                 e = json.loads(row[0])
-                if e['status'] != 'pending' or ('eclosion' if e['kind'] == 'watch' else e['kind']) != model.action:
+                if e['status'] != 'pending' or {'watch': 'eclosion', 'egg_setup': 'activate'}.get(e['kind'], e['kind']) != model.action:
                     continue
                 if model.action in ('collect', 'score') and not (parse(e['due']) <= at <= parse(e['end'])):
                     continue
-                if model.action in ('tissue', 'cold', 'warm', 'collect', 'first_instar', 'remove', 'eclosion', 'score'):
+                if model.action in ('tissue', 'cold', 'warm', 'collect', 'first_instar', 'remove', 'eclosion', 'score', 'activate'):
                     matches.append(e)
             if matches:
                 e = min(matches, key=lambda x: abs((parse(x['due']) - at).total_seconds()))
@@ -655,6 +746,8 @@ def update_event(eid: str, model: EventUpdate):
         if not row:
             raise HTTPException(404, "event_not_found")
         e = json.loads(row[0])
+        if e['kind'] == 'egg_setup' and model.status == 'done':
+            raise HTTPException(409, 'egg_setup_activation_required')
         if e["container_id"] and (model.restore or model.status == "pending") and get_container(db, e["container_id"])["status"] in ("completed", "discarded"):
             raise HTTPException(409, "container_inactive")
         if model.status:
@@ -825,6 +918,10 @@ def new_egg_batch(cid: str, model: EggBatchInput):
         c = get_container(db, cid)
         if c['kind'] != 'egg_laying' or c['status'] != 'active' or c['parents'] != 'present':
             raise HTTPException(409, 'egg_laying_unavailable')
+        if not c.get('genotype', '').strip():
+            raise HTTPException(409, 'egg_genotype_review_required')
+        if not c.get('setup_time'):
+            raise HTTPException(409, 'egg_setup_time_required')
         if model.lay_start < start_of(c):
             raise HTTPException(422, 'invalid_egg_window')
         batch = {**model.model_dump(mode='json'), 'id':uid(), 'source_id':cid, 'status':'planned', 'collected_at':None, 'uses':[]}
