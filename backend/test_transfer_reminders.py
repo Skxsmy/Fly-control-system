@@ -111,6 +111,58 @@ def test_continuation_reschedule_and_disable_survive_reconciliation(client, kind
 
 
 @pytest.mark.parametrize('kind', ['vial', 'bottle'])
+def test_transfer_schedule_toggle_preserves_one_manual_reminder_until_actual_transfer(client, kind):
+    source = create(client, kind=kind)
+    reminder, = transfer_events(client, source['id'])
+    response = client.patch(f"/api/events/{reminder['id']}", json={
+        'due': '2026-09-05T10:00', 'end': '2026-09-05T11:00'})
+    assert response.status_code == 200, response.text
+    pinned, = transfer_events(client, source['id'])
+
+    assert edit(client, source, workflow={**source['workflow'], 'transfer_enabled': False}).status_code == 200
+    cancelled, = transfer_events(client, source['id'])
+    assert cancelled == {**pinned, 'status': 'cancelled', 'cancel_reason': 'rule_removed', 'conflict': False}
+    assert cancelled['rule_key'] == 'transfer'
+
+    assert edit(client, source, workflow=source['workflow']).status_code == 200
+    restored, = transfer_events(client, source['id'])
+    assert restored == pinned
+
+    response = move(client, source, at='2026-09-05T10:30')
+    assert response.status_code == 200, response.text
+    completed, = transfer_events(client, source['id'])
+    assert completed == {**pinned, 'status': 'done', 'conflict': False}
+    child_reminder, = transfer_events(client, response.json()['id'])
+    assert child_reminder['due'] == '2026-09-08T10:30'
+
+
+@pytest.mark.parametrize('kind', ['vial', 'bottle'])
+def test_transfer_schedule_toggle_does_not_reenable_explicitly_disabled_task(client, kind):
+    source = create(client, kind=kind)
+    reminder, = transfer_events(client, source['id'])
+    assert client.patch(f"/api/events/{reminder['id']}", json={'status': 'disabled'}).status_code == 200
+    disabled, = transfer_events(client, source['id'])
+    for enabled in (False, True):
+        assert edit(client, source, workflow={**source['workflow'], 'transfer_enabled': enabled}).status_code == 200
+        current, = transfer_events(client, source['id'])
+        assert current == disabled
+
+
+@pytest.mark.parametrize('kind', ['vial', 'bottle'])
+def test_restore_transfer_while_schedule_is_off_returns_actual_cancelled_state(client, kind):
+    source = create(client, kind=kind)
+    reminder, = transfer_events(client, source['id'])
+    assert client.patch(f"/api/events/{reminder['id']}", json={'status': 'disabled'}).status_code == 200
+    assert edit(client, source, workflow={**source['workflow'], 'transfer_enabled': False}).status_code == 200
+    response = client.patch(f"/api/events/{reminder['id']}", json={'restore': True})
+    assert response.status_code == 200, response.text
+    persisted, = transfer_events(client, source['id'])
+    assert response.json() == {key: value for key, value in persisted.items() if key != 'conflict'}
+    assert response.json()['status'] == 'cancelled'
+    assert response.json()['cancel_reason'] == 'rule_removed'
+
+
+@pytest.mark.parametrize('kind', ['vial', 'bottle'])
 def test_existing_parent_count_or_absence_prevents_extra_transfers(client, kind):
     source = create(client, kind=kind, purpose='stock', genotype='w1118', transfer_index=1)
     response = move(client, source)

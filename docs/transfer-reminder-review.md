@@ -17,3 +17,13 @@ Verified on 2026-09-11 with isolated databases and the main local UI.
 - Browser checks: bottle transfer at Sep 11 13:15 generated Sep 14 13:15; backdated vial transfer at Sep 10 11:20 generated Sep 13 11:20. Advancing the test clock to Sep 15 placed both reminders in Needs attention. Second transfers reached 2/2 with no third-transfer reminder. Vial → bottle and bottle → vial renewals inherited genotype, reset counts to zero and completed the source renewal reminder. Both the Operations and reminder-button renewal paths were exercised.
 
 Existing false workflow settings are not mass-migrated because they can represent intentional opt-outs. A missing historical reminder should be repaired for the verified affected record, preserving unrelated rows and a backup.
+
+## Transfer reminder setting
+
+The container's **Schedule optional parent transfer** checkbox controls automatic transfer scheduling, not the physical operation. Switching it off keeps genotype, parent state, transfer count, development and other reminders unchanged. Actual transfers remain available within the parent-presence/count limits. A new same-parent destination defaults to reminders on; stock renewal inherits the source workflow and starts its count at zero.
+
+A reminder's **Disable** action separately disables that one task. Turning the container setting on does not override a task explicitly disabled, completed or skipped. Restoring a task uses the current template and cannot activate a transfer rule while the container setting is off.
+
+Follow-up audit found that a rescheduled transfer was converted into custom work when the checkbox was turned off, leaving it active and producing a duplicate when turned on again. Explicit transfer opt-out now cancels the original generated event while retaining its identity and manual time for re-enabling. Other manually preserved workflow tasks keep their existing behavior. Event updates return their reconciled stored status, including cancellation when the underlying rule is off.
+
+Follow-up validation: **81 targeted backend tests passed**, including six new vial/bottle cases for toggle behavior, actual transfer completion, explicit task Disable and the reconciled Restore response. Four new cases failed before the fix. The personal workspace had no historical `custom-preserved-*` transfer entries to repair.

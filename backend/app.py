@@ -465,6 +465,10 @@ def edit_container(cid: str, model: EditContainer):
                 expected = {event['rule_key'] for event in generated_events(proposed, temperatures_of(db, cid))}
                 for row in db.execute('SELECT payload FROM events WHERE container_id=?', (cid,)).fetchall():
                     event = json.loads(row[0])
+                    if event['rule_key'] == 'transfer' and not model.workflow.transfer_enabled:
+                        # Cancelling the schedule also cancels a rescheduled transfer;
+                        # retain its rule and manual time so re-enabling restores it.
+                        continue
                     if event['status'] == 'pending' and event['pinned'] and event['rule_key'] not in expected and not event['rule_key'].startswith(('custom-', 'plan-')):
                         event.update(rule_key='custom-preserved-' + event['id'], basis='manual')
                         save_event(db, event)
@@ -802,7 +806,7 @@ def update_event(eid: str, model: EventUpdate):
         save_event(db, e)
         if e["container_id"]:
             reconcile(db, get_container(db, e["container_id"]))
-        return e
+        return json.loads(db.execute("SELECT payload FROM events WHERE id=?", (eid,)).fetchone()[0])
 
 class AvailabilityInput(BaseModel):
     date: date
