@@ -1,5 +1,7 @@
 # Project conventions
 
+For the current implementation, development commands, known limitations, and work to resume, read [HANDOFF.md](HANDOFF.md). Keep the human-facing [README.md](README.md) focused on installation and use.
+
 ## Product UI
 
 - Keep the interface in English and use translation keys for future languages.
