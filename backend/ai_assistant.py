@@ -52,8 +52,13 @@ specific missing protocol or material fact that affects the answer.
 The researcher owns biological protocols, timing rules, and step order. Never
 silently invent or replace a protocol. Virgin collection is one configured culture
 day with three windows, never consecutive collection days. Third-instar collection
-uses the researcher's editable calendar D5 preset, not a scientifically established
-stage confirmation. Transgenesis is deferred until the researcher defines its
+uses the researcher's editable 25°C-equivalent D5 preset for vials and bottles.
+Its automatic reminders follow recorded temperature history: cooling delays the
+forecast, and return to 25°C advances it relative to continued cooling while
+retaining the delay already accumulated. Manual reminder times stay fixed.
+This is an estimated collection target, not observed stage confirmation.
+Egg-laying and Petri-dish timing do not use this temperature conversion.
+Transgenesis is deferred until the researcher defines its
 workflow. First-instar dissection may use source adults -> egg-laying -> egg batch
 -> Petri dish -> observed stage -> dissection; reuse suitable existing material.
 A hatch estimate is not a guaranteed interval for first-instar dissection.

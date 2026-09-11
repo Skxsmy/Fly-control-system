@@ -69,10 +69,14 @@ def test_existing_cross_can_switch_to_larvae_without_active_old_adult_tasks(work
     )
 
 
-def test_temperature_does_not_silently_scale_the_calendar_day_preset(workflow_client):
+@pytest.mark.parametrize('kind', ['vial', 'bottle'])
+def test_initial_cold_culture_returns_earlier_when_warmed(workflow_client, kind):
     client, clock = workflow_client
-    culture = larval_culture(client, initial_temperature=18)
+    culture = larval_culture(client, kind=kind, initial_temperature=18)
     original = events_for(client, culture, 'third_instar')[0]
+    assert (original['due'], original['end'], original['basis']) == (
+        '2026-09-11T09:00', '2026-09-11T17:00', 'development',
+    )
     clock['now'] = datetime(2026, 9, 3, 13)
     response = client.post(f"/api/containers/{culture['id']}/actions", json={
         'action': 'warm', 'at': '2026-09-03T12:00',
@@ -80,8 +84,25 @@ def test_temperature_does_not_silently_scale_the_calendar_day_preset(workflow_cl
     assert response.status_code == 200, response.text
     after = events_for(client, culture, 'third_instar')[0]
     assert (after['id'], after['due'], after['end']) == (
-        original['id'], '2026-09-06T09:00', '2026-09-06T17:00',
+        original['id'], '2026-09-07T09:00', '2026-09-07T17:00',
     )
+
+
+@pytest.mark.parametrize('kind', ['vial', 'bottle'])
+def test_existing_calendar_reminder_updates_in_place_from_recorded_temperature(workflow_client, kind):
+    client, _ = workflow_client
+    culture = larval_culture(client, kind=kind, initial_temperature=18)
+    reminder = events_for(client, culture, 'third_instar')[0]
+    # Represent the cached reminder left by the former calendar-D5 implementation.
+    with module.database() as db:
+        module.save_event(db, {**reminder, 'basis': 'calendar',
+                              'due': '2026-09-06T09:00', 'end': '2026-09-06T17:00'})
+    refreshed = events_for(client, culture, 'third_instar')
+    assert len(refreshed) == 1 and refreshed[0]['id'] == reminder['id']
+    assert (refreshed[0]['due'], refreshed[0]['end'], refreshed[0]['basis']) == (
+        '2026-09-11T09:00', '2026-09-11T17:00', 'development',
+    )
+    assert events_for(client, culture, 'third_instar') == refreshed
 
 
 def test_day_and_collection_window_can_be_changed_without_duplicate_tasks(workflow_client):

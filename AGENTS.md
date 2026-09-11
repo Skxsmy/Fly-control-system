@@ -18,7 +18,8 @@ For the current implementation, development commands, known limitations, and wor
 
 - The researcher defines experimental steps and biological timing rules. AI may propose editable plans; it must not silently invent or replace protocols.
 - Virgin collection uses one configured culture day with three windows. Do not add collection days.
-- Third-instar collection currently uses the researcher's calendar D5 preset.
+- Third-instar collection in vials/bottles uses the researcher's editable 25°C-equivalent D5 preset, adjusted using recorded temperature history. Keep the configured daily collection window.
+- Every new time-related action, reminder, or planner must use the shared `backend/timing.py` engine and the explicit anchor/clock-basis rules in HANDOFF.md. Do not implement independent temperature date-offset logic.
 - Transgenesis is deferred until the researcher defines its workflow.
 - Keep planned work separate from recorded physical operations. Keep genotype targets separate from verified selected genotypes.
 - AI architecture supports cloud and local connections; implement one first. Do not present an unconnected model or an unimplemented planner as working.

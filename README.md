@@ -60,12 +60,12 @@ Use **Transfer parents** to continue with the same adults; the new container tra
 Default schedules are editable laboratory presets:
 
 - **Virgin collection:** one culture day, initially D10, with three windows: **09:00–11:00**, **15:00–15:30**, and **19:00–21:00**.
-- **Third-instar collection:** calendar **D5** by default.
+- **Third-instar collection:** **25°C-equivalent D5** by default, adjusted by the vial/bottle's temperature history.
 - **Parent transfer:** optional **D3**, with up to two transfers. Stock renewal defaults to **11 days**.
 - **Culture checks:** initially D6, including a tissue reminder for bottles.
 - **Petri-dish incubation:** an initial **24–30-hour** estimate applied to the full laying window.
 
-Timing predictions are estimates. Temperature adjustments apply to developmental forecasts; calendar-based tasks and hourly egg protocols have their own rules. Check suitability for your genotype and experimental conditions. Reminders appear in the app; there are no closed-app notifications.
+Cooling delays developmental reminders; recording a return to 25°C brings them forward relative to continued cooling, retaining the delay already accumulated. Parent transfer/removal, stock renewal, and manually rescheduled reminders keep their calendar times. Hourly egg protocols do not use this temperature adjustment. Timing predictions are estimates; check suitability for your genotype and experimental conditions. Reminders appear in the app; there are no closed-app notifications.
 
 ## Optional AI assistant
 

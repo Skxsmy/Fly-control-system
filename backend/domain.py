@@ -1,5 +1,6 @@
 """Deterministic, lab-local scheduling. Estimates are not biological guarantees."""
 from datetime import date, datetime, time, timedelta
+from .timing import RateTimeline, elapsed_target
 
 DEFAULT_TEMPLATE = {
     "transfer_day": 3, "max_transfers": 2, "check_day": 6,
@@ -24,36 +25,18 @@ def start_of(container):
 def rate(temp, template):
     return template["rate18"] if temp == 18 else 1.0
 
+def development_timeline(container, temperatures):
+    return RateTimeline(
+        start_of(container), rate(container.get('initial_temperature', 25), container['template']),
+        ((parse(segment['at']), rate(segment['temperature'], container['template']))
+         for segment in temperatures),
+    )
+
 def effective_age(container, temperatures, at):
-    origin = start_of(container)
-    if at <= origin:
-        return 0.0
-    total, cursor, current = 0.0, origin, container.get("initial_temperature", 25)
-    for segment in sorted(temperatures, key=lambda x: x["at"]):
-        point = parse(segment["at"])
-        if point > at:
-            break
-        if point > cursor:
-            total += (point - cursor).total_seconds() / 86400 * rate(current, container["template"])
-            cursor = point
-        current = segment["temperature"]
-    total += (at - cursor).total_seconds() / 86400 * rate(current, container["template"])
-    return max(0.0, total)
+    return development_timeline(container, temperatures).elapsed_seconds(at) / 86400
 
 def forecast(container, temperatures, target):
-    cursor, accumulated = start_of(container), 0.0
-    current = container.get("initial_temperature", 25)
-    for segment in sorted(temperatures, key=lambda x: x["at"]):
-        point = parse(segment["at"])
-        if point <= cursor:
-            current = segment["temperature"]
-            continue
-        progress = (point - cursor).total_seconds() / 86400 * rate(current, container["template"])
-        if accumulated + progress >= target:
-            return cursor + timedelta(days=(target - accumulated) / rate(current, container["template"]))
-        accumulated += progress
-        cursor, current = point, segment["temperature"]
-    return cursor + timedelta(days=max(0, target - accumulated) / rate(current, container["template"]))
+    return development_timeline(container, temperatures).reaches(target * 86400)
 
 def eclosion_estimate(container, temperatures):
     """Expose an observation when available, otherwise the culture's configured estimate."""
@@ -99,27 +82,26 @@ def generated_events(container, temperatures):
         container['purpose'] == 'cross' and workflow and workflow.get('cross_goal') == 'third_instar'
     )
     if container["parents"] == "present" and container["transfer_index"] < template["max_transfers"] and (workflow is None or workflow['transfer_enabled']):
-        due = origin + timedelta(days=template["transfer_day"])
+        due = elapsed_target(origin, timedelta(days=template["transfer_day"]))
         if not container.get("setup_time"):
             due = due.replace(hour=9)
         add("transfer", "transfer", due)
     if workflow and container['purpose'] in ('cross', 'virgin', 'larvae') and container['parents'] == 'present':
-        due = (origin + timedelta(days=min(template['transfer_day'], workflow['remove_day']))).replace(hour=9, minute=0)
-        end = (origin + timedelta(days=workflow['remove_day'])).replace(hour=17, minute=0)
+        due = elapsed_target(origin, timedelta(days=min(template['transfer_day'], workflow['remove_day']))).replace(hour=9, minute=0)
+        end = elapsed_target(origin, timedelta(days=workflow['remove_day'])).replace(hour=17, minute=0)
         add('parents-remove', 'remove', due, end, critical=True)
     if third_instar:
         protocol = workflow or {}
-        day = origin.date() + timedelta(days=protocol.get('third_instar_day', 5))
+        day = forecast(container, temperatures, protocol.get('third_instar_day', 5)).date()
         window = protocol.get('third_instar_window', ['09:00', '17:00'])
         due = datetime.combine(day, time.fromisoformat(window[0]))
         end = datetime.combine(day, time.fromisoformat(window[1]))
-        # This is the user's provisional calendar target, not a temperature-derived stage prediction.
-        add('third_instar', 'third_instar', due, end, critical=True)
+        add('third_instar', 'third_instar', due, end, critical=True, basis='development')
         return events
     check = forecast(container, temperatures, template["check_day"]).replace(hour=9, minute=0)
     add("check", "tissue" if container["kind"] == "bottle" else "check", check, basis="development")
     if container["purpose"] == "stock":
-        due = (origin + timedelta(days=template["stock_interval"])).replace(hour=9, minute=0)
+        due = elapsed_target(origin, timedelta(days=template["stock_interval"])).replace(hour=9, minute=0)
         add("stock", "stock", due)
     else:
         watch = forecast(container, temperatures, template["watch_day"]).replace(hour=9, minute=0)
@@ -131,7 +113,7 @@ def generated_events(container, temperatures):
             first = parse(container['first_eclosion_at'])
         if scoring:
             for day in range(workflow['selection_days']):
-                due = datetime.combine(first.date() + timedelta(days=day), time.fromisoformat(workflow['selection_window'][0]))
+                due = datetime.combine(elapsed_target(first, timedelta(days=day)).date(), time.fromisoformat(workflow['selection_window'][0]))
                 end = datetime.combine(due.date(), time.fromisoformat(workflow['selection_window'][1]))
                 add(f'score-{day}', 'score', due, end, True, 'development')
             return events
@@ -145,8 +127,8 @@ def generated_events(container, temperatures):
 def incubation_window(container, temperatures):
     p = container['incubation']
     # The first and last eggs have different ages; transfer never resets egg age.
-    earliest = parse(p['lay_start']) + timedelta(hours=p['min_hours'])
-    latest = parse(p['lay_end']) + timedelta(hours=p['max_hours'])
+    earliest = elapsed_target(parse(p['lay_start']), timedelta(hours=p['min_hours']))
+    latest = elapsed_target(parse(p['lay_end']), timedelta(hours=p['max_hours']))
     reference = p['reference_temperature']
     review = container['initial_temperature'] != reference or p.get('lay_temperature', reference) != reference or any(t['temperature'] != reference for t in temperatures)
     return {'start': earliest.isoformat(timespec='minutes'), 'end': latest.isoformat(timespec='minutes'), 'review': review}
@@ -181,7 +163,7 @@ def virgin_clock(container, temperatures, logs, now):
     # Mixed-temperature adult maturation has no validated linear conversion here.
     changed = any(last < x["at"] <= now.isoformat() and x["temperature"] != temp for x in temperatures)
     hours = container["template"]["virgin_hours18" if temp == 18 else "virgin_hours25"]
-    deadline = parse(last) + timedelta(hours=hours)
+    deadline = elapsed_target(parse(last), timedelta(hours=hours))
     return {"state": "mixed" if changed else ("elapsed" if now >= deadline else "within"),
             "last_clear": last, "deadline": None if changed else deadline.isoformat(timespec="minutes")}
 
@@ -223,9 +205,15 @@ def suggest_cooling(container, temperatures, settings, exceptions, now, excluded
     critical = [x for x in base if x["critical"] and parse(x["end"]) >= now]
     if not any(event_conflict(x, settings, exceptions) for x in critical):
         return {"state": "clear", "options": []}
-    first = forecast(container, temperatures, container["template"]["watch_day"])
+    workflow = container.get('workflow') or {}
+    third_instar = container['purpose'] == 'larvae' or (
+        container['purpose'] == 'cross' and workflow.get('cross_goal') == 'third_instar'
+    )
+    cutoff_day = workflow.get('third_instar_day', 5) if third_instar else container['template']['watch_day']
+    collection_day = cutoff_day if third_instar else container['template']['collection_day']
+    first = forecast(container, temperatures, cutoff_day)
     if first <= now:
-        return {"state": "watch_started", "options": []}
+        return {"state": "development_target_reached" if third_instar else "watch_started", "options": []}
     candidates = []
     # Bounded search: hourly handling slots, one cold interval, at most 7 days cold.
     slots = []
@@ -249,12 +237,12 @@ def suggest_cooling(container, temperatures, settings, exceptions, now, excluded
             future = [e for e in events if e["critical"] and parse(e["end"]) >= now]
             if not future or any(event_conflict(e, settings, exceptions) for e in future):
                 continue
-            watch = forecast(container, projected, container["template"]["watch_day"])
-            # Guard the uncertain onset date as well as the collection slots.
-            if not available_windows(watch.date(), settings, exceptions):
+            cutoff = forecast(container, projected, cutoff_day)
+            # Guard the relevant stage date as well as its collection slots.
+            if not available_windows(cutoff.date(), settings, exceptions):
                 continue
             candidates.append({"cold_at": cold.isoformat(timespec="minutes"), "warm_at": warm.isoformat(timespec="minutes"),
-                               "hours": hours, "collection_date": forecast(container, projected, container["template"]["collection_day"]).date().isoformat(),
+                               "hours": hours, "collection_date": forecast(container, projected, collection_day).date().isoformat(),
                                "events": future})
     candidates.sort(key=lambda x: (x["hours"], x["cold_at"]))
     return {"state": "suggested" if candidates else "no_solution", "options": candidates[:3], "resolution_minutes": 60}

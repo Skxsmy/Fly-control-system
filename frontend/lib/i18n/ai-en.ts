@@ -99,7 +99,7 @@ const aiEn: Record<string, string> = {
   'ai.targetPrefix': 'Target date: {date}\n\n',
   'ai.promptSource': ' using {sources}',
   'ai.prompt.l1': 'Help me plan first-instar larval dissection{source}. List the required steps, timing ranges, and missing inputs. Use my recorded timing rules and distinguish estimates from observations.',
-  'ai.prompt.l3': 'Help me plan third-instar larval dissection{source}. Use the recorded culture-day collection preset, identify suitable cultures, and list timing conflicts and missing inputs.',
+  'ai.prompt.l3': 'Help me plan third-instar larval dissection{source}. Use the configured collection day and recorded temperature history, identify suitable cultures, and list timing conflicts and missing inputs.',
   'error.ai_not_configured': 'Set a base URL and model in AI connection settings.',
   'error.ai_connection_changed': 'The model connection changed. Review the active connection, then try again.',
   'error.ai_invalid_settings': 'Check the connection fields and try again.',

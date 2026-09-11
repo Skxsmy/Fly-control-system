@@ -96,6 +96,27 @@ def test_warm_undo_preserves_earlier_temperature_history(client):
     assert len(temperatures) == 1 and temperatures[0]['temperature'] == 18
 
 
+@pytest.mark.parametrize('kind', ['vial', 'bottle'])
+def test_l3_temperature_undo_reuses_history_without_duplicate_reminders(client, kind):
+    c = create(client, kind=kind, purpose='larvae', genotype='w1118')
+    original = events(client, c['id'])
+    cold = record(client, c, 'cold', at='2026-09-03T10:00')
+    chilled = events(client, c['id'])
+    warm = record(client, c, 'warm', at='2026-09-05T10:00')
+    warmed = events(client, c['id'])
+    larval_id = next(e['id'] for e in original.values() if e['kind'] == 'third_instar')
+    assert original[larval_id]['due'] < warmed[larval_id]['due'] < chilled[larval_id]['due']
+
+    response = delete(client, c['id'], warm['id'])
+    assert response.status_code == 200, response.text
+    assert events(client, c['id']) == chilled
+    assert container(client, c['id'])['temperature'] == 18
+    response = delete(client, c['id'], cold['id'])
+    assert response.status_code == 200, response.text
+    assert events(client, c['id']) == original
+    assert container(client, c['id'])['temperatures'] == []
+
+
 def test_remove_undo_restores_parents_and_cancelled_transfer(client):
     c = create(client)
     before = events(client, c['id'])
