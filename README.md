@@ -42,6 +42,8 @@ Ordinary stock management works offline after installation. AI assistance is opt
 
 The setup date is **D0**. Setup time is optional for vials and bottles; egg-laying containers and Petri dishes require a time.
 
+Use **Transfer parents** to continue with the same adults; the new container tracks their transfer count and next transfer time. Use **Renew stock culture** to start a fresh stock vial or bottle with the inherited genotype and transfer count **0**. Creating it completes the source's renewal reminder.
+
 ## Features
 
 | Area | What you can do |
@@ -52,7 +54,7 @@ The setup date is **D0**. Setup time is optional for vials and bottles; egg-layi
 | Temperature and setup planning | Record actual 18°C/25°C moves, view adjusted developmental estimates, and request setup-date or cooling suggestions around your availability. Accepting a cooling plan creates reminders; record the actual moves separately. |
 | Timed egg work | Create an egg-laying container from an existing vial/bottle, selecting parents or offspring and a known adult genotype. Record laying windows and egg collections; use aliquots for Petri dishes, dissection, imaging, or other work. |
 | Hourly incubation | Track an egg-age range and an editable first-instar estimate from the original laying window. Record observed first instar, dissection, and imaging. |
-| Corrections | Delete an operation from **Activity** and undo its associated changes. The preview checks dependencies; older records may require a state correction or may not support automatic undo. |
+| Corrections | Delete an operation from **Activity** and undo its changes, or delete only the record while keeping current state and later work. Independent entries can be removed in any order. The preview explains retained data and any clock changes. |
 | Cleanup | **End culture** and **Discard culture** retain history. **Delete container permanently** removes a mistaken container after a preview and backup, releases its label, and is blocked by dependent records. |
 
 Default schedules are editable laboratory presets:

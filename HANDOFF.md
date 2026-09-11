@@ -20,6 +20,7 @@ Flykeeper is in **active development**. Expect bugs and incomplete workflows; do
 | `backend/app.py` | FastAPI routes, validation, SQLite initialization/migrations, atomic mutations and reminder reconciliation |
 | `backend/domain.py` | Clocks, purpose templates, event generation, availability, setup/cooling search, incubation estimates |
 | `backend/activity_cleanup.py` | Activity preview/undo, change journals, legacy corrections and dependency checks |
+| `backend/activity_record_cleanup.py` | Explicit record-only deletion, retained physical work, preview fingerprints and deleted-log protection |
 | `backend/container_cleanup.py` | Permanent deletion, required backup, dependency checks, reusable display IDs |
 | `backend/workspace_restore.py` | Backup validation, preview, atomic replacement and recovery download |
 | `backend/ai_assistant.py`, `backend/ai_models.py` | Profiles, protected credentials, context snapshots, read-only chat, model discovery and diagnostics |
@@ -77,7 +78,7 @@ Use targeted `npx.cmd oxlint <changed paths>` as appropriate. Historical full-sc
 
 Time simulation: run `.\.venv\Scripts\python.exe -m backend.review_server` and open port 8001. It always uses `.qa/time-review.db`. Set `.qa/clock.txt` to a laboratory-local timestamp such as `2026-09-25T15:00`, with no UTC offset; refresh or wait for the next UI minute tick. This does not change OS time or the personal app.
 
-Previously recorded validation before this documentation rewrite: **350 backend tests passed, 1 skipped**, plus a later **40-test activity suite passed**. The skip requires Windows file-symlink privileges. These are historical results; no code tests were run for this documentation snapshot.
+Latest validation (2026-09-11): **407 backend tests passed, 1 skipped**; after two additional metadata regressions and the clear-clock preview update, the complete **68-test activity suite passed**. The skip requires Windows file-symlink privileges. Frontend typecheck, local build, changed-file lint and **11 frontend tests** passed. Browser checks covered transfers/renewal across vial and bottle with simulated time, independent activity undo, and record-only deletion while retaining later work. The persistent app was restarted under the normal Windows account and record digests were unchanged across restart.
 
 ## Data, credentials and the running account
 
@@ -93,6 +94,8 @@ Previously recorded validation before this documentation rewrite: **350 backend 
 
 - Setup is **D0**, never D1. Vial/bottle setup time is optional; a date-only setup remains date-only. Egg-laying/dish workflows require exact timing. Physical status, parent presence, observed stage, actual temperature and forecasts are separate.
 - Each destination has its own D0. Same-parent transfers increment the destination cohort's transfer index; source offspring keep developing. Defaults: calendar D3, maximum two ordinary transfers. Early actual transfers anchor the next interval. A new generation starts a new cohort with transfer zero. Adult chronological age is otherwise out of scope.
+- Choosing **Transfer parents** enables continuation reminders by default in the destination, including stock/legacy sources whose ordinary workflow disables transfers. Explicit form opt-out remains respected; the transfer limit still suppresses a further reminder. Do not globally enable historical descendants: an existing false value may be intentional.
+- Stock reminders expose **Renew**, and stock Operations expose **Renew stock culture**. The frontend renewal form allows vial/bottle selection, inherits genotype, shows transfer count 0, and submits the existing `/transfer` API with `mode: generation`. It creates a new cohort/D0 and completes the source stock reminder atomically; source parent state is unchanged. Non-stock **Start next generation** remains a separate UI path.
 - Virgin production and F1-virgin cross outcomes have **one configured collection day only**, default equivalent D10, with three independent windows: 09:00–11:00, 15:00–15:30, 19:00–21:00. Never reinstate a multi-day default from an old report or biological reference.
 - Stock maintenance uses its own renewal interval (initially 11 calendar days), without automatic virgin tasks. F1 selection/scoring is a separate cross outcome; do not label it virgin collection. Genetic targets and verified selected genotypes are separate facts.
 - L3 collection uses the researcher's **calendar D5** preset and initially one 09:00–17:00 window. It does not automatically shift with temperature. Collection does not imply all larvae were taken, adults removed, or culture ended.
@@ -114,11 +117,12 @@ Dishes retain the original laying interval. The editable first-instar estimate i
 
 ## Activity undo and permanent deletion
 
-The Activity trash button removes a mistaken recorded operation **and restores its associated effects**. This is distinct from deleting a container or hiding a log.
+The Activity trash button offers **delete and undo changes** or **delete the record, keep current state and later work**. Automatic undo is the default when available. If undo conflicts with existing work, record-only deletion stays available; do not reinstate a mandatory reverse-chronological deletion policy. This is distinct from permanent container deletion.
 
 - New operations journal changed rows in `meta` under `activity_undo:` in the same transaction. The journal covers container state, temperatures, logs, events, plans and egg batches; grouped collection + clear is one operation.
 - Preview supplies effects, blockers, required legacy corrections and a fingerprint. Deletion rechecks the fingerprint, validates the projected records, creates a full backup, and atomically reverses the changes/reconciles reminders.
-- Never overwrite later edits or activity. Linked child containers block undo; activity deletion does not cascade into them. Imported journals are untrusted data and are shape/scope/record validated. Oversized journals can explicitly make undo unavailable.
+- Automatic undo never overwrites later edits or activity. Independent log/reminder changes can be undone after unrelated operations. Shared affected rows, clock/state dependencies and ambiguous repeated completion are reported with relevant activities. Whole-container row changes are not field-rebased. Linked children block physical undo, but never force a user to delete the child before using record-only deletion. Imported journals are untrusted data and are shape/scope/record validated.
+- `DELETE /api/containers/{cid}/activities/{lid}` defaults to `mode: undo`. Explicit `mode: keep_later` uses the nested `keep_later.fingerprint`, deletes only the selected log and identifiable owning undo metadata, and retains all other physical rows/events/logs. It rejects state corrections or reminder reopening. Removing a clear log recalculates the derived virgin clock; companion log entries remain, with their grouped undo history removed. An `activity_deleted:` marker prevents later undo metadata from resurrecting the selected log. Backups/export/restore include these markers.
 - Legacy records may need a user-selected previous stage/parent state or specific completed reminders to reopen. Creation, linked transfers, egg operations, and activation without sufficient history may be blocked. Do not invent missing prior state just to make deletion succeed.
 - After activating a planned egg-laying container, undo its activation from the **destination's Activity**. That reversal also removes the corresponding source log. Directly deleting that source log remains blocked because it does not own the activation journal.
 - Permanent container deletion has its own preview, dependency/staleness checks, exact-label confirmation and mandatory backup. It releases the human-readable label for reuse but creates a fresh internal identity. End/discard retains history and reserves the label.
@@ -138,6 +142,8 @@ Not implemented: researcher-authored workflow editor, deterministic multi-contai
 - [AGENTS.md](AGENTS.md): current project conventions.
 - [REVIEW_REPORT.md](REVIEW_REPORT.md): original form/time-flow review, fixes and validation limits. Some historical collection-day examples are outdated; the single-day invariant above controls.
 - [Egg-laying selection review](docs/egg-laying-selection-review.md): lineage and planned/actual behavior.
+- [Parent transfer and stock renewal review](docs/transfer-reminder-review.md): continuation defaults, renewal entry points and simulated-time verification.
+- [Activity deletion review](docs/activity-deletion-review.md): independent undo and the explicit keep-later deletion path.
 - [AI connection review](docs/ai-connection-review.md): sandbox-account failure, model discovery, transport fixes and historical tests.
 - [Assistant integration review](docs/assistant-integration-review.md), [interaction design](docs/assistant-interaction-design.md), [UI cleanup review](docs/ui-cleanup-review.md): implemented UI/data paths and review history.
 - [Experiment planner proposal](docs/experiment-planner-design.md), [HTML prototype](docs/assistant-design.html): future workflow editing/solver design, not implementation claims.

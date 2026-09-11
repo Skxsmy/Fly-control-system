@@ -3,7 +3,7 @@ import { t } from '@/lib/i18n';
 import type { Culture, Workflow } from '@/lib/types';
 import { Field } from './fly-forms';
 
-export function WorkflowFields({purpose, value, goal, setGoal}: {purpose: Culture['purpose']; value?: Workflow | null; goal: Workflow['cross_goal']; setGoal: (goal: Workflow['cross_goal']) => void}) {
+export function WorkflowFields({purpose, value, goal, setGoal, defaultTransferEnabled}: {purpose: Culture['purpose']; value?: Workflow | null; goal: Workflow['cross_goal']; setGoal: (goal: Workflow['cross_goal']) => void; defaultTransferEnabled?: boolean}) {
   return <section className="form-section"><h3>{t('workflow.title')}</h3>
     {purpose === 'cross' && <>
       <Field label={t('workflow.goal')}><select value={goal} onChange={e => setGoal(e.target.value as Workflow['cross_goal'])}>{['score','virgins','third_instar'].map(x => <option key={x} value={x}>{t(`workflow.${x}`)}</option>)}</select></Field>
@@ -11,7 +11,7 @@ export function WorkflowFields({purpose, value, goal, setGoal}: {purpose: Cultur
       <Field label={t('workflow.target')}><input name="workflow.target_genotype" defaultValue={value?.target_genotype || ''} maxLength={1000}/></Field>
       <Field label={t('workflow.criteria')}><textarea name="workflow.selection_notes" defaultValue={value?.selection_notes || ''} maxLength={3000} rows={2}/></Field>
     </>}
-    <label className="check-label"><input type="checkbox" name="workflow.transfer_enabled" defaultChecked={value?.transfer_enabled ?? purpose !== 'stock'}/>{t('workflow.transfer')}</label>
+    <label className="check-label"><input type="checkbox" name="workflow.transfer_enabled" defaultChecked={defaultTransferEnabled ?? value?.transfer_enabled ?? purpose !== 'stock'}/>{t('workflow.transfer')}</label>
     {purpose !== 'stock' && <Field label={t('workflow.removeDay')}><input name="workflow.remove_day" type="number" min={1} max={30} required defaultValue={value?.remove_day || 5}/></Field>}
     {purpose === 'cross' && goal === 'score' && <>
       <div className="form-grid"><Field label={t('workflow.selectionDay')}><input name="workflow.selection_day" type="number" min={1} max={90} required defaultValue={value?.selection_day || 10}/></Field>

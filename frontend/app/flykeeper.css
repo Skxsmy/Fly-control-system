@@ -37,3 +37,4 @@
 
 .activity-dot{flex-shrink:0}.activity-content{flex:1;min-width:0}.activity-delete{color:#aa453e}.activity-delete-summary p{margin-top:6px;overflow-wrap:anywhere}
 .activity-reopen{display:grid;gap:12px}.activity-reopen legend{margin-bottom:10px}.activity-reopen small{display:block;color:#63755a;margin-top:3px}
+.activity-reopen input[type=radio]{width:18px;height:18px;min-height:18px;padding:0;flex:0 0 18px;accent-color:#176657}.activity-undo-conflicts{font-size:.875rem;color:#596c64}.activity-undo-conflicts p+p{margin-top:6px}.activity-undo-conflicts ul{margin:8px 0 0;padding-left:20px}

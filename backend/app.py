@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, NaiveDatetime, field_validator, model_val
 from .domain import (DEFAULT_SETTINGS, DEFAULT_TEMPLATE, start_of, parse, effective_age,
                      generated_events, event_conflict, virgin_clock, suggest_cooling, incubation_window, eclosion_estimate)
 from .container_cleanup import preview_container_deletion, delete_container_permanently, next_container_label
-from . import activity_cleanup
+from . import activity_cleanup, activity_record_cleanup
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.environ.get("FLYKEEPER_DB", ROOT / "data" / "flykeeper.db"))
@@ -414,17 +414,23 @@ def delete_container(cid: str, model: DeleteContainerInput):
 
 class DeleteActivityInput(BaseModel):
     fingerprint: str
+    mode: Literal['undo', 'keep_later'] = 'undo'
     corrections: dict[str, str] = Field(default_factory=dict)
     reopen_event_ids: list[str] = Field(default_factory=list)
 
 @app.get('/api/containers/{cid}/activities/{lid}/delete-preview')
 def activity_delete_preview(cid: str, lid: str):
     with database() as db:
-        return activity_cleanup.preview_activity_deletion(db, cid, lid, sys.modules[__name__])
+        return activity_record_cleanup.preview_activity_deletion(db, cid, lid, sys.modules[__name__])
 
 @app.delete('/api/containers/{cid}/activities/{lid}')
 def activity_delete(cid: str, lid: str, model: DeleteActivityInput):
     with database() as db:
+        if model.mode == 'keep_later':
+            if model.corrections or model.reopen_event_ids:
+                raise HTTPException(422, 'activity_record_only_invalid')
+            return activity_record_cleanup.delete_activity_record(db, cid, lid, model.fingerprint, ROOT / 'backups')
+        activity_record_cleanup.require_no_deleted_log_restoration(db, cid, lid)
         return activity_cleanup.delete_activity(db, cid, lid, model.fingerprint,
             model.corrections, model.reopen_event_ids, ROOT / 'backups', reconcile, get_container, sys.modules[__name__])
 
@@ -543,7 +549,11 @@ def transfer(cid: str, model: TransferInput):
         if same:
             data.update(female_genotype=c["female_genotype"], male_genotype=c["male_genotype"], genotype=c["genotype"], purpose=c["purpose"])
         if model.workflow is None and (same or model.purpose == c['purpose']):
-            data['workflow'] = c.get('workflow') or Workflow(cross_goal='virgins', transfer_enabled=True).model_dump(mode='json')
+            data['workflow'] = {**(c.get('workflow') or Workflow(cross_goal='virgins', transfer_enabled=True).model_dump(mode='json'))}
+            if same:
+                # Recording a transfer starts a continuation schedule in the
+                # destination; an explicitly submitted opt-out still wins.
+                data['workflow']['transfer_enabled'] = True
         child = create_container(db, ContainerInput(**data), c, same)
         if same:
             c["parents"] = "transferred"

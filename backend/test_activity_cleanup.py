@@ -270,6 +270,102 @@ def test_legacy_third_instar_asks_which_completed_reminder_to_reopen(client, reo
     assert events(client, c['id'])[task['id']]['status'] == ('pending' if reopen else 'done')
 
 
+@pytest.mark.parametrize('legacy', [False, True])
+def test_third_instar_record_can_be_deleted_after_unrelated_parent_transfer(client, legacy):
+    c = create(client, kind='bottle', purpose='stock', genotype='w1118')
+    activity = record(client, c, 'third_instar')
+    if legacy:
+        make_legacy(activity['id'])
+    response = client.post(f"/api/containers/{c['id']}/transfer", json={
+        'kind': 'vial', 'purpose': 'stock', 'genotype': c['genotype'],
+        'setup_date': '2026-09-09', 'setup_time': '09:00',
+    })
+    assert response.status_code == 200, response.text
+    child = response.json()
+    before = snapshot(client)
+    shown = preview(client, c['id'], activity['id'])
+    assert shown['can_delete'] and shown['dependent_activities'] == [], shown
+    response = delete(client, c['id'], activity['id'], shown)
+    assert response.status_code == 200, response.text
+    after = snapshot(client)
+    assert after['events'] == before['events']
+    assert container(client, child['id']) == next(item for item in before['containers'] if item['id'] == child['id'])
+    parent_before = next(item for item in before['containers'] if item['id'] == c['id'])
+    assert container(client, c['id']) == {**parent_before, 'logs': [item for item in parent_before['logs'] if item['id'] != activity['id']]}
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_collection_undo_preserves_later_temperature_and_observation(client, legacy):
+    c = create(client, purpose='larvae', genotype='w1118')
+    task = next(item for item in events(client, c['id']).values() if item['kind'] == 'third_instar')
+    activity = record(client, c, 'third_instar', event_id=task['id'])
+    if legacy:
+        make_legacy(activity['id'])
+    cold = record(client, c, 'cold', at='2026-09-08T11:00')
+    observation = record(client, c, 'pupae', at='2026-09-08T12:00')
+    shown = preview(client, c['id'], activity['id'])
+    assert shown['can_delete'] and not shown['dependent_activities'], shown
+    response = delete(client, c['id'], activity['id'], shown,
+                      **({'reopen_event_ids': [task['id']]} if legacy else {}))
+    assert response.status_code == 200, response.text
+    after = container(client, c['id'])
+    assert after['temperature'] == 18 and after['stage'] == 'pupae'
+    assert {item['id'] for item in after['logs']} >= {cold['id'], observation['id']}
+    assert events(client, c['id'])[task['id']]['status'] == 'pending'
+    assert delete(client, c['id'], observation['id']).status_code == 200
+    assert delete(client, c['id'], cold['id']).status_code == 200
+
+
+def test_earlier_collection_can_be_undone_without_reopening_later_window(client):
+    c = create(client)
+    windows = [item for item in events(client, c['id']).values() if item['kind'] == 'collect']
+    first = record(client, c, 'collect', event_id=windows[0]['id'])
+    later = record(client, c, 'collect', at='2026-09-08T12:00', event_id=windows[1]['id'])
+    shown = preview(client, c['id'], first['id'])
+    assert shown['can_delete'] and not shown['dependent_activities'], shown
+    assert delete(client, c['id'], first['id'], shown).status_code == 200
+    remaining = events(client, c['id'])
+    assert remaining[windows[0]['id']]['status'] == 'pending'
+    assert remaining[windows[1]['id']]['status'] == 'done'
+    assert delete(client, c['id'], later['id']).status_code == 200
+
+
+def test_repeated_completion_names_only_the_activity_that_still_needs_the_reminder(client):
+    c = create(client, kind='bottle')
+    task = next(item for item in events(client, c['id']).values() if item['kind'] == 'collect')
+    first = record(client, c, 'collect', event_id=task['id'])
+    later = record(client, c, 'collect', at='2026-09-08T12:00')
+    record(client, c, 'tissue', at='2026-09-08T13:00')
+    shown = preview(client, c['id'], first['id'])
+    assert not shown['can_delete'] and 'dependent_activity' in shown['blockers']
+    assert shown['dependent_activities'] == [{key: later[key] for key in ('id', 'action', 'at')}]
+    assert delete(client, c['id'], first['id'], shown).status_code == 409
+    assert events(client, c['id'])[task['id']]['status'] == 'done'
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_stage_dependency_does_not_name_unrelated_later_collection(client, legacy):
+    c = create(client)
+    first = record(client, c, 'larvae')
+    if legacy:
+        make_legacy(first['id'])
+    later = record(client, c, 'pupae', at='2026-09-08T11:00')
+    record(client, c, 'third_instar', at='2026-09-08T12:00')
+    shown = preview(client, c['id'], first['id'])
+    assert not shown['can_delete'] and 'dependent_activity' in shown['blockers']
+    assert shown['dependent_activities'] == [{key: later[key] for key in ('id', 'action', 'at')}]
+
+
+def test_later_collection_does_not_prevent_undo_of_observation_with_disjoint_changes(client):
+    c = create(client, purpose='larvae', genotype='w1118')
+    observation = record(client, c, 'larvae')
+    collection = record(client, c, 'third_instar', at='2026-09-08T11:00')
+    assert delete(client, c['id'], observation['id']).status_code == 200
+    assert container(client, c['id'])['stage'] == 'unobserved'
+    assert any(item['id'] == collection['id'] for item in container(client, c['id'])['logs'])
+    assert delete(client, c['id'], collection['id']).status_code == 200
+
+
 def test_legacy_stage_requires_explicit_correction_not_a_guessed_baseline(client):
     c = create(client, stage='pupae')
     activity = record(client, c, 'eclosion')
@@ -498,6 +594,16 @@ def test_invalid_journal_cannot_modify_tables_or_another_containers_records(clie
     response = delete(client, c['id'], activity['id'], shown)
     assert response.status_code == 409
     assert database_dump() == before
+
+
+def test_deeply_nested_invalid_journal_still_has_a_deletion_preview(client):
+    c = create(client)
+    activity = record(client, c, 'third_instar')
+    with module.database() as db:
+        db.execute('UPDATE meta SET value=? WHERE key=?',
+                   ('[' * 2000 + '0' + ']' * 2000, 'activity_undo:' + activity['id']))
+    shown = preview(client, c['id'], activity['id'])
+    assert not shown['can_delete'] and 'invalid_journal' in shown['blockers']
 
 
 @pytest.mark.parametrize('tamper', ['stage', 'rule_key', 'malformed_primary'])

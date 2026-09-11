@@ -23,6 +23,9 @@ COLUMNS = {
 }
 STAGES = ['unobserved', 'larvae', 'pupae', 'eclosion', 'first_instar']
 PARENTS = ['present', 'removed', 'transferred']
+RECORD_ACTIONS = {'collect', 'tissue', 'dissect', 'image', 'score', 'third_instar'}
+CONTAINER_ACTIONS = {'activate', 'setup_planned', 'remove', 'clear', 'larvae', 'pupae',
+                     'eclosion', 'first_instar', 'complete', 'discard', 'transfer'}
 
 
 def _json(value):
@@ -74,7 +77,7 @@ def _row_valid(table, row, rid):
     if 'payload' in row:
         try:
             payload = json.loads(row['payload'])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             return False
         if not isinstance(payload, dict) or payload.get('id') != rid:
             return False
@@ -126,7 +129,7 @@ def _find_journal(db, cid, lid):
     for row in db.execute("SELECT key,value FROM meta WHERE key LIKE 'activity_undo:%'"):
         try:
             journal = json.loads(row['value'])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             if row['key'] == PREFIX + lid:
                 return row['key'], None, 'invalid_journal'
             continue
@@ -154,10 +157,45 @@ def _event_row(row, payload):
     return {**row, 'payload': json.dumps(payload, ensure_ascii=False)}
 
 
-def _journal_plan(state, cid, lid, journal):
+def _dependent_activities(state, cid, later, changes, db=None, corrections=False):
+    tables = {change['table'] for change in changes}
+    affected_rows = {(change['table'], change['id']) for change in changes}
+    if corrections:
+        tables.add('containers')
+    reopened = {}
+    for change in changes:
+        if change['table'] == 'events' and change['before'] and change['after']:
+            before, after = (json.loads(change[side]['payload']) for side in ('before', 'after'))
+            if before.get('status') != 'done' and after.get('status') == 'done':
+                reopened[change['id']] = {'watch': 'eclosion', 'egg_setup': 'activate'}.get(after.get('kind'), after.get('kind'))
+    dependent = []
+    for row in later:
+        action = row['action']
+        later_journal = _find_journal(db, cid, row['id'])[1] if db is not None else None
+        conflict = ('containers' in tables and action in CONTAINER_ACTIONS
+                    or 'temperatures' in tables and action in ('cold', 'warm')
+                    or 'egg_batches' in tables and action.startswith('egg_'))
+        if later_journal:
+            conflict = conflict or any((change['table'], change['id']) in affected_rows
+                                       for change in later_journal.get('changes', []))
+        candidates = {eid for eid, kind in reopened.items() if kind == action}
+        if candidates:
+            # Another collection can complete a different window. A repeated
+            # completion with no event change has no stored event ID, so keep
+            # that ambiguity explicit instead of reopening its possible task.
+            completed = {change['id'] for change in later_journal.get('changes', [])
+                         if change['table'] == 'events' and change['after']
+                         and json.loads(change['after']['payload']).get('status') == 'done'} if later_journal else set()
+            conflict = conflict or not completed or bool(completed & candidates)
+        if conflict:
+            dependent.append(row)
+    return dependent
+
+
+def _journal_plan(state, cid, lid, journal, db=None):
     blockers, changes, effects = [], [], ['remove_activity']
     if journal.get('unavailable'):
-        return [], effects, [journal['unavailable']]
+        return [], effects, [journal['unavailable']], []
     current = json.loads(state['containers'][cid]['payload'])
     source_id = current.get('source_id')
     inserted_children = {}
@@ -165,7 +203,7 @@ def _journal_plan(state, cid, lid, journal):
         if change['table'] == 'containers' and change['before'] is None and change['after'] is not None:
             child = json.loads(change['after']['payload'])
             if child.get('source_id') != cid or change['id'] == cid:
-                return [], effects, ['invalid_journal']
+                return [], effects, ['invalid_journal'], []
             inserted_children[change['id']] = child
     # Journals are data, including after restore. Constrain their write scope.
     for change in journal['changes']:
@@ -182,7 +220,7 @@ def _journal_plan(state, cid, lid, journal):
             if not (table == 'logs' and owner == source_id and change['before'] is None
                     and row['action'] in ('egg_laying_parents', 'egg_laying_offspring')
                     and row['notes'] == current['label']):
-                return [], effects, ['invalid_journal']
+                return [], effects, ['invalid_journal'], []
         now = state[table].get(rid)
         if now != change['after']:
             blockers.append('changed_record')
@@ -195,14 +233,20 @@ def _journal_plan(state, cid, lid, journal):
             effects.append('restore_reminders')
         elif table == 'egg_batches':
             effects.append('restore_egg_batch')
+        elif table == 'logs' and change['before'] is None and row['action'] == 'clear':
+            effects.append('restore_virgin_clock')
     inserted_logs = {change['id'] for change in changes if change['table'] == 'logs' and change['before'] is None and change['after']['container_id'] == cid}
     if set(journal['log_ids']) != inserted_logs or lid not in inserted_logs:
-        return [], effects, ['invalid_journal']
-    if any(row['container_id'] == cid and rid not in journal['known_log_ids'] for rid, row in state['logs'].items()):
-        blockers.append('later_activity')
-    if any(rid not in journal['known_related_ids'] for rid in _related(state, cid)):
+        return [], effects, ['invalid_journal'], []
+    later = [row for rid, row in state['logs'].items()
+             if row['container_id'] == cid and rid not in journal['known_log_ids']]
+    dependent = _dependent_activities(state, cid, later, changes, db)
+    if dependent:
+        blockers.append('dependent_activity')
+    physical_changes = any(change['table'] not in ('logs', 'events') for change in changes)
+    if physical_changes and any(rid not in journal['known_related_ids'] for rid in _related(state, cid)):
         blockers.append('linked_container')
-    return changes, effects, list(dict.fromkeys(blockers))
+    return changes, effects, list(dict.fromkeys(blockers)), dependent
 
 
 def _legacy_plan(state, cid, lid):
@@ -215,8 +259,6 @@ def _legacy_plan(state, cid, lid):
     effects, blockers, corrections, reminders = ['remove_activity'], [], [], []
     logs = [row for row in state['logs'].values() if row['container_id'] == cid]
     position = next(i for i, row in enumerate(logs) if row['id'] == lid)
-    if any(row['action'] != 'created' for row in logs[position + 1:]):
-        blockers.append('later_activity')
     if action == 'created':
         blockers.append('container_creation')
     elif action in ('transfer', 'generation', 'egg_laying_parents', 'egg_laying_offspring', 'egg_laying_transfer', 'egg_laying_generation'):
@@ -265,7 +307,7 @@ def _legacy_plan(state, cid, lid):
                 event['status'] = 'pending'
                 event.pop('cancel_reason', None)
                 changes.append(_change('events', _event_row(row, event), row))
-    elif action not in ('collect', 'tissue', 'dissect', 'image', 'score', 'third_instar'):
+    elif action not in RECORD_ACTIONS:
         blockers.append('unsupported_activity')
     if restored != current:
         changes.append(_change('containers', {**current_row, 'payload': json.dumps(restored, ensure_ascii=False)}, current_row))
@@ -278,7 +320,10 @@ def _legacy_plan(state, cid, lid):
             reminders.append({key: event.get(key, '') for key in ('id', 'kind', 'due', 'end', 'title')})
     if reminders:
         effects.append('choose_reminders')
-    return changes, effects, list(dict.fromkeys(blockers)), corrections, reminders
+    dependent = _dependent_activities(state, cid, logs[position + 1:], changes, corrections=bool(corrections))
+    if dependent:
+        blockers.append('dependent_activity')
+    return changes, effects, list(dict.fromkeys(blockers)), corrections, reminders, dependent
 
 
 def _validate_projection(db, changes, journal_key, services):
@@ -306,12 +351,12 @@ def _plan(db, cid, lid, services=None):
         raise HTTPException(404, 'activity_not_found')
     key, journal, error = _find_journal(db, cid, lid)
     if error:
-        changes, effects, blockers, corrections, reminders = [], [], [error], [], []
+        changes, effects, blockers, corrections, reminders, dependent = [], [], [error], [], [], []
     elif journal:
-        changes, effects, blockers = _journal_plan(state, cid, lid, journal)
+        changes, effects, blockers, dependent = _journal_plan(state, cid, lid, journal, db)
         corrections, reminders = [], []
     else:
-        changes, effects, blockers, corrections, reminders = _legacy_plan(state, cid, lid)
+        changes, effects, blockers, corrections, reminders, dependent = _legacy_plan(state, cid, lid)
     if journal and not blockers and services is not None:
         try:
             _validate_projection(db, changes, key, services)
@@ -322,6 +367,7 @@ def _plan(db, cid, lid, services=None):
     preview = {'fingerprint': fingerprint, 'effects': list(dict.fromkeys(effects)), 'blockers': blockers,
                'can_delete': not blockers, 'corrections': corrections, 'reminders': reminders,
                'related_activities': [{key: row[key] for key in ('id', 'action', 'at')} for row in related],
+               'dependent_activities': [{key: row[key] for key in ('id', 'action', 'at')} for row in dependent],
                'legacy': journal is None}
     return preview, changes, state, key
 
