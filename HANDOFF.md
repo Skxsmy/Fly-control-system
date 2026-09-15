@@ -1,6 +1,6 @@
 # Flykeeper — maintainer and AI handoff
 
-Snapshot: **2026-09-11**. This is a development handoff, not the installation guide. Read [README.md](README.md) for user-facing setup and features, and [AGENTS.md](AGENTS.md) for project conventions. Source code and current tests take precedence over historical review reports.
+Snapshot: **2026-09-15**. This is a development handoff, not the installation guide. Read [README.md](README.md) for user-facing setup and features, and [AGENTS.md](AGENTS.md) for project conventions. Source code and current tests take precedence over historical review reports.
 
 Flykeeper is in **active development**. Expect bugs and incomplete workflows; do not treat prior test results as proof that a new change works.
 
@@ -85,6 +85,8 @@ Transfer-setting follow-up: **81 targeted backend tests passed**, covering the n
 
 Latest temperature-engine validation (2026-09-11): **498 backend tests passed, 1 skipped** (the Windows symlink privilege check). This includes 44 shared-clock tests, 24 vial/bottle cold/warm reminder cases, 10 L3 planner cases, old-calendar reminder reconciliation and L3 temperature undo. Frontend typecheck and local build passed. Main-app UI verification used an isolated bottle with simulated D0 September 1: the L3 reminder moved September 6 → September 9 after cold on September 3 → September 7 after actual warm on September 5; the same configured window remained. The personal workspace was backed up before restarting the updated app under the normal Windows account.
 
+Settings propagation verification (2026-09-15): **156 targeted backend tests passed**, including 18 new settings cases, temperature histories, transfers, workflows and linked egg sources. Frontend typecheck/build passed. Isolated main-app testing changed collection D10 to D12 through Settings: the existing 25°C vial changed to September 13 and the existing 18°C bottle to September 25 (D0 September 1), retaining three collection windows each. No personal settings were changed for testing.
+
 ## Data, credentials and the running account
 
 - `data/flykeeper.db` holds laboratory records and settings. `FLYKEEPER_DB` selects another database. `.qa/` is for isolated test data.
@@ -109,6 +111,8 @@ Latest temperature-engine validation (2026-09-11): **498 backend tests passed, 1
 - Culture forecasts accumulate elapsed time × rate: initial 25°C = 1.0, editable 18°C = 0.5. Cooling delays remaining developmental targets; actual return to 25°C advances them relative to continued cooling while retaining the delay already accumulated. Repeated moves use the full history; stages reached before a move retain their previous forecast. Parent transfer/removal and stock renewal remain calendar-based. Hour-sensitive egg experiments do not use this multiplier automatically.
 - A **complete adult clear** starts the virgin-collection clock; collection alone does not. Current thresholds are 8 h at 25°C and 16 h at 18°C. Mixed-temperature intervals require assessment, not linear maturity conversion.
 - Rescheduling updates and pins the existing event. Reconciliation preserves manual times and completed/skipped/disabled work. Restore deliberately returns an eligible generated task to its template. An expired window becomes overdue at its end, including the same day.
+- Saving changed protocol parameters in Settings applies those changed fields to every active/planned vial and bottle, including cultures with custom values for those fields. Unchanged container parameters and distinct workflow fields remain intact. This explicitly supersedes the old new-container-only settings behavior. Reconcile all affected schedules in the same transaction using the shared time engine and actual history. Affected pending reschedules are reset to the new protocol; unrelated pins, custom reminders, accepted handling plans, and completed/skipped/disabled history are preserved. Closed cultures and hourly incubation protocols are not rewritten. Source-dependent offspring readiness is refreshed after source updates. Invalid merged protocols roll back the entire save.
+- When collection-window times change with the same number of slots, preserve each slot's event ID, remap its rule key, and retain completed history without creating another pending copy. Saving language/availability alone must not overwrite container protocols or reset reschedules. Settings changes apply on save; do not silently migrate personal container overrides at startup.
 - Accepting cooling recommendations creates reminders only; record actual moves separately. Planned containers remain planned until explicit actual activation, even when their start time becomes overdue.
 
 Setup search considers candidates through the next 14 days. Cooling search considers one cold interval, hourly handling slots and at most seven cold days; tasks need a contiguous 15-minute overlap with availability. Temperature-forbidden cultures, pinned critical work and already-cold/late cultures need explicit handling rather than a fabricated optimum. Neither stage observations nor the current model calibrate genotype sensitivity, light cycles or uncertainty distributions.

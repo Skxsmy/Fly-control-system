@@ -59,6 +59,8 @@ Use **Transfer parents** to continue with the same adults; the new container tra
 
 Default schedules are editable laboratory presets:
 
+Changing protocol values in **Protocols & settings** updates the affected reminders in existing active and planned cultures, including rescheduled reminders. Completed history is retained. Unchanged culture-specific parameters remain intact.
+
 - **Virgin collection:** one culture day, initially D10, with three windows: **09:00–11:00**, **15:00–15:30**, and **19:00–21:00**.
 - **Third-instar collection:** **25°C-equivalent D5** by default, adjusted by the vial/bottle's temperature history.
 - **Parent transfer:** optional **D3**, with up to two transfers. Stock renewal defaults to **11 days**.

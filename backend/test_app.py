@@ -204,12 +204,12 @@ def test_no_cross_origin_mutation(client):
     response = client.post('/api/containers', headers={'Origin': 'https://example.com'}, json={})
     assert response.status_code == 403
 
-def test_settings_are_snapshots_and_windows_are_validated(client):
+def test_settings_update_existing_cultures_and_windows_are_validated(client):
     c = create(client)
     settings = snapshot(client)["settings"]
     settings["template"]["collection_day"] = 11
     assert client.put('/api/settings', json=settings).status_code == 200
-    assert snapshot(client)["containers"][0]["template"]["collection_day"] == 10
+    assert snapshot(client)["containers"][0]["template"]["collection_day"] == 11
     assert create(client)["template"]["collection_day"] == 11
     settings['weekly']['0'] = [['09:00', '12:00'], ['11:00', '15:00']]
     assert client.put('/api/settings', json=settings).status_code == 422

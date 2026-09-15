@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, NaiveDatetime, field_validator, model_validator
+from pydantic import BaseModel, Field, NaiveDatetime, ValidationError, field_validator, model_validator
 from .domain import (DEFAULT_SETTINGS, DEFAULT_TEMPLATE, start_of, parse, effective_age,
                      generated_events, event_conflict, virgin_clock, suggest_cooling, incubation_window, eclosion_estimate)
 from .container_cleanup import preview_container_deletion, delete_container_permanently, next_container_label
@@ -860,7 +860,57 @@ def put_settings(model: SettingsInput):
         previous = settings_of(db)
         if model.timezone != previous["timezone"] and db.execute("SELECT COUNT(*) FROM containers").fetchone()[0]:
             raise HTTPException(409, "timezone_locked")
-        db.execute("UPDATE meta SET value=? WHERE key='settings'", (dump(model.model_dump(mode="json")),))
+        updated = model.model_dump(mode='json')
+        changed = {key: value for key, value in updated['template'].items()
+                   if value != previous['template'].get(key)}
+        if changed:
+            cultures = [json.loads(row[0]) for row in db.execute('SELECT payload FROM containers')]
+            changed_sources = set()
+            for c in cultures:
+                if c['kind'] not in ('vial', 'bottle') or c['status'] not in ('active', 'planned'):
+                    continue
+                old_template = c['template']
+                temps = temperatures_of(db, c['id'])
+                old_estimate = eclosion_estimate(c, temps)
+                before = {e['rule_key']: e for e in generated_events(c, temps)}
+                try:
+                    c['template'] = Template.model_validate({**old_template, **changed}).model_dump(mode='json')
+                except ValidationError:
+                    raise HTTPException(409, 'settings_protocol_conflict') from None
+                after = {e['rule_key']: e for e in generated_events(c, temps)}
+                if (eclosion_estimate(c, temps) != old_estimate
+                        or (not c.get('setup_time') and old_template['windows'][0] != c['template']['windows'][0])):
+                    changed_sources.add(c['id'])
+                # Windows identify collection rules. Keep the same logical slot/ID
+                # when its time changes, including already-completed collection slots.
+                remap = {}
+                if 'windows' in changed and len(old_template['windows']) == len(c['template']['windows']):
+                    remap = {f'collect-0-{a}-{b}': f'collect-0-{x}-{y}'
+                             for (a, b), (x, y) in zip(old_template['windows'], c['template']['windows'])}
+                for row in db.execute('SELECT payload FROM events WHERE container_id=?', (c['id'],)).fetchall():
+                    e = json.loads(row[0])
+                    old_key = e['rule_key']
+                    new_key = remap.get(old_key, old_key)
+                    if old_key not in before and new_key not in after:
+                        continue  # Custom reminders and accepted handling plans have their own anchors.
+                    if e['status'] == 'pending' and before.get(old_key) != after.get(new_key):
+                        e['pinned'] = False
+                    e['rule_key'] = new_key
+                    save_event(db, e)
+                save_container(db, c)
+                reconcile(db, c)
+            # Refresh source-dependent offspring readiness after every source has
+            # received the new parameters; egg placement/collection times stay fixed.
+            for c in cultures:
+                if c['kind'] == 'egg_laying' and c['status'] == 'planned':
+                    if c.get('source_id') in changed_sources:
+                        for row in db.execute("SELECT payload FROM events WHERE container_id=? AND rule_key='offspring-ready'", (c['id'],)).fetchall():
+                            e = json.loads(row[0])
+                            if e['status'] == 'pending':
+                                e['pinned'] = False
+                                save_event(db, e)
+                    reconcile(db, c)
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (dump(updated),))
     return {"ok": True}
 
 @app.get("/api/containers/{cid}/suggestions")

@@ -238,7 +238,7 @@ function GeneralSettingsPage({settings, saved, onShutdown}: {settings: Settings;
   return <div className="settings-layout"><section className="panel"><div className="panel-title"><h2>{t('settings.protocol')}</h2></div><Form submit={async form => {
     const weekly: Record<string, string[][]> = {}; for (let i = 0; i < 7; i++) weekly[String(i)] = parseWindows(fieldValue(form, `weekly.${i}`));
     await api('/settings', 'PUT', {...settings, locale: (fieldValue(form, 'locale') || settings.locale), timezone: fieldValue(form, 'timezone'), weekly, template: templateFrom(form)}); await saved();
-  }}><ProtocolFields template={settings.template}/>
+  }}><p>{t('settings.applyExisting')}</p><ProtocolFields template={settings.template}/>
     <section className="form-section"><h2>{t('calendar.weekly')}</h2>{Array.from({length: 7}, (_, i) => <Field key={i} label={weekday(i)}><input name={`weekly.${i}`} placeholder={t('calendar.windowsPlaceholder')} defaultValue={windowsText(settings.weekly[String(i)])}/></Field>)}</section>
     <section className="form-section"><h2>{t('settings.general')}</h2><Field label={t('settings.timezone')}><input name="timezone" defaultValue={settings.timezone} required/></Field><Field label={t('common.language')}><select name="locale" defaultValue={settings.locale}>{availableLocales().map(locale => <option key={locale.code} value={locale.code}>{locale.name}</option>)}</select></Field></section>
   </Form></section><aside className="settings-aside"><ShutdownPanel onShutdown={onShutdown}/></aside></div>;
