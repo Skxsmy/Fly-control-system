@@ -9,7 +9,7 @@ export type Culture = {
   genotype: string; female_genotype: string; male_genotype: string; setup_date: string; setup_time: string | null;
   initial_temperature: number; temperature: number; temperature_policy: string; notes: string; template: Template;
   cohort_id: string; transfer_index: number; source_id: string | null; parents: string; stage: string; status: string;
-  calendar_day: number; effective_age: number; temperatures: {at: string; temperature: number}[];
+  calendar_day: number | null; effective_age: number; temperatures: {at: string; temperature: number}[];
   logs: ActivityRecord[];
   clock: {state: string; last_clear: string | null; deadline: string | null};
   incubation?: Incubation | null; egg_batch_id?: string | null;
@@ -39,6 +39,8 @@ export type Task = {
   egg_batch_id?: string | null; batch_label?: string;
   timing_review?: boolean;
   all_day?: boolean;
+  open_ended?: boolean;
+  scheduled_at?: string;
 };
 export type Availability = {date: string; kind: string; windows: string[][]; notes: string};
 export type Settings = {locale: string; timezone: string; weekly: Record<string, string[][]>; template: Template};

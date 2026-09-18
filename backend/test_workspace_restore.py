@@ -373,3 +373,32 @@ def test_record_limit_has_distinct_error(client, importer, tmp_path, monkeypatch
     monkeypatch.setattr(restore, 'MAX_IMPORTED_RECORDS', 1)
     with pytest.raises(HTTPException, match='import_too_many_records'):
         importer.preview(incoming)
+
+
+def test_ongoing_renewal_timing_survives_backup_restore(client, importer, tmp_path):
+    create(client, purpose='stock', genotype='w1118')
+    state = snapshot(client)
+    renewal = next(event for event in state['events'] if event['kind'] == 'stock')
+    assert renewal['all_day'] and renewal['open_ended']
+    original = records()
+    incoming = uploaded_backup(tmp_path).read_bytes()
+    create(client, label='Later culture')
+    preview = importer.preview(incoming)
+    importer.restore(restore_input(preview))
+    assert records() == original
+
+
+@pytest.mark.parametrize('changes', [
+    {'all_day': 'yes'}, {'open_ended': 'yes'}, {'scheduled_at': 'tomorrow'},
+    {'open_ended': True, 'kind': 'check'},
+])
+def test_import_rejects_invalid_reminder_timing_flags(client, changes):
+    create(client, purpose='stock', genotype='w1118')
+    snapshot(client)
+    rows = records()
+    row = next(row for row in rows['events'] if json.loads(row['payload'])['kind'] == 'stock')
+    value = json.loads(row['payload'])
+    value.update(changes)
+    row['payload'] = json.dumps(value)
+    with pytest.raises(HTTPException, match='import_invalid_records'):
+        restore._validate_records(rows, module)

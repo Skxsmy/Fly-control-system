@@ -20,7 +20,7 @@ from .container_cleanup import preview_container_deletion, delete_container_perm
 from . import activity_cleanup, activity_record_cleanup
 from . import injection
 from .injection import InjectionState
-from .timing import RateTimeline
+from .timing import calendar_day_index
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.environ.get("FLYKEEPER_DB", ROOT / "data" / "flykeeper.db"))
@@ -47,6 +47,122 @@ def database():
         raise
     finally:
         db.close()
+
+def migrate_stock_renewal_defaults(db):
+    """Upgrade the former stock default once, including restored legacy workspaces."""
+    if db.execute("SELECT 1 FROM meta WHERE key='stock_renewal_day10_v1'").fetchone():
+        return
+    from .timing import calendar_day_target
+
+    original_containers = {row['id']: dict(row) for row in db.execute('SELECT * FROM containers')}
+    original_events = {row['id']: dict(row) for row in db.execute('SELECT * FROM events')}
+    eligible = {cid for cid, row in original_containers.items()
+                if (value := json.loads(row['payload']))['kind'] in ('vial', 'bottle')
+                and value['purpose'] == 'stock' and value['status'] in ('active', 'planned')}
+
+    def upgrade_container(row):
+        if row is None or row['id'] not in eligible:
+            return row
+        value = json.loads(row['payload'])
+        if (value.get('kind') in ('vial', 'bottle') and value.get('purpose') == 'stock'
+                and value.get('status') in ('active', 'planned')
+                and isinstance(value.get('template'), dict)
+                and value['template'].get('stock_interval') == 11):
+            value['template']['stock_interval'] = 10
+            return {**row, 'payload': dump(value)}
+        return row
+
+    def upgrade_event(row, owner_row):
+        if row is None or owner_row is None or row['container_id'] not in eligible:
+            return row
+        value, owner = json.loads(row['payload']), json.loads(owner_row['payload'])
+        if (value.get('kind') != 'stock' or value.get('rule_key') != 'stock'
+                or value.get('status') != 'pending' or owner.get('injection')
+                or owner.get('purpose') != 'stock' or owner.get('status') not in ('active', 'planned')
+                or not isinstance(owner.get('template'), dict) or type(value.get('pinned')) is not bool):
+            return row
+        if not value['pinned']:
+            # Only rewrite generated timestamps. An independently changed date,
+            # status, pin, title or other field must still fail the exact undo check.
+            try:
+                original_day = calendar_day_target(start_of(owner), owner['template']['stock_interval'])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                return row
+            expected = {original_day.isoformat(timespec='minutes'),
+                        original_day.replace(hour=9).isoformat(timespec='minutes')}
+            if value.get('due') == value.get('end') and value.get('due') in expected:
+                migrated_owner = json.loads(upgrade_container(owner_row)['payload'])
+                try:
+                    raw = next(event for event in generated_events(migrated_owner, []) if event['kind'] == 'stock')
+                except (KeyError, TypeError, ValueError, OverflowError, StopIteration):
+                    return row
+                # Match ordinary reconciliation's field ordering, while keeping
+                # non-migration snapshot fields rather than accepting later edits.
+                value.update(due=raw['due'], end=raw['end'], all_day=True, open_ended=True)
+                value = {**{key: value[key] for key in raw if key in value}, **value}
+        value.update(all_day=True, open_ended=True)
+        return {**row, 'payload': dump(value)}
+
+    settings = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
+    if settings['template'].get('stock_interval') == 11:
+        settings['template']['stock_interval'] = 10
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (dump(settings),))
+    upgraded_rows = {'containers': {}, 'events': {}}
+    original_rows = {'containers': original_containers, 'events': original_events}
+    for row in original_containers.values():
+        updated = upgrade_container(row)
+        upgraded_rows['containers'][row['id']] = updated
+        if updated != row:
+            db.execute('UPDATE containers SET payload=? WHERE id=?', (updated['payload'], row['id']))
+    for row in original_events.values():
+        updated = upgrade_event(row, original_containers.get(row['container_id']))
+        upgraded_rows['events'][row['id']] = updated
+        if updated != row:
+            db.execute('UPDATE events SET payload=? WHERE id=?', (updated['payload'], row['id']))
+
+    # Stored snapshots participate in the same migration as live rows. This is
+    # not a relaxed undo comparison: subsequent real edits remain differences.
+    for row in db.execute("SELECT key,value FROM meta WHERE key LIKE 'activity_undo:%'").fetchall():
+        try:
+            journal = json.loads(row['value'])
+        except (TypeError, ValueError, RecursionError):
+            continue
+        if not activity_cleanup.validate_journal(journal, row['key']) or journal.get('unavailable'):
+            continue
+        existing_conflicts = {(change['table'], change['id']) for change in journal['changes']
+                              if change['table'] in original_rows
+                              and change['after'] != original_rows[change['table']].get(change['id'])}
+        container_changes = {change['id']: change for change in journal['changes'] if change['table'] == 'containers'}
+        changed = False
+        # Event snapshots need each side's original container anchor/template.
+        for change in journal['changes']:
+            if change['table'] != 'events':
+                continue
+            for side in ('before', 'after'):
+                previous = change[side]
+                if previous is None:
+                    continue
+                owner_change = container_changes.get(previous['container_id'])
+                owner = owner_change[side] if owner_change else original_containers.get(previous['container_id'])
+                updated = upgrade_event(previous, owner)
+                if updated != previous:
+                    change[side], changed = updated, True
+        for change in container_changes.values():
+            for side in ('before', 'after'):
+                updated = upgrade_container(change[side])
+                if updated != change[side]:
+                    change[side], changed = updated, True
+        if any((change['table'], change['id']) in existing_conflicts
+               and change['after'] == upgraded_rows[change['table']].get(change['id'])
+               for change in journal['changes']):
+            # A real edit can collide with the new default (for example a later
+            # explicit 10 -> 11 edit). Migration must not silently authorize undo
+            # by erasing that difference. Record-only deletion remains available.
+            journal['unavailable'], changed = 'changed_record', True
+        if changed:
+            db.execute('UPDATE meta SET value=? WHERE key=?', (activity_cleanup._json(journal), row['key']))
+    db.execute("INSERT INTO meta VALUES('stock_renewal_day10_v1','1')")
+
 
 def init_db():
     with database() as db:
@@ -91,6 +207,7 @@ def init_db():
                 # Preserve historical parent fields and source changes; their meaning cannot be inferred safely.
                 db.execute('UPDATE containers SET payload=? WHERE id=?', (dump(value), row['id']))
             db.execute("INSERT INTO meta VALUES('known_egg_adults_v1','1')")
+        migrate_stock_renewal_defaults(db)
 
 init_db()
 
@@ -162,6 +279,16 @@ def reconcile(db, container):
             old['status'] = 'pending'
             old.pop('cancel_reason', None)
             save_event(db, old)
+        if (old and raw['kind'] == 'stock' and old['status'] == 'pending'
+                and (not old.get('all_day') or not old.get('open_ended'))):
+            # The ongoing nature of renewal also applies to manually moved work.
+            # Keep its chosen timestamp and identity, but never treat end as a deadline.
+            old.update(all_day=True, open_ended=True)
+            save_event(db, old)
+        if old and old['status'] == 'pending' and raw.get('scheduled_at') and old.get('scheduled_at') != raw['scheduled_at']:
+            # Keep the protocol target visible even when the user moves the task.
+            old['scheduled_at'] = raw['scheduled_at']
+            save_event(db, old)
         if old and (old["status"] != "pending" or old["pinned"]):
             continue
         event = {**raw, "id": old["id"] if old else uid(), "container_id": container["id"], "status": "pending", "pinned": False}
@@ -192,7 +319,7 @@ class Template(BaseModel):
     check_day: int = Field(6, ge=1, le=60)
     collection_day: int = Field(10, ge=1, le=90)
     collection_days: Literal[1] = 1
-    stock_interval: int = Field(11, ge=1, le=90)
+    stock_interval: int = Field(10, ge=1, le=90)
     watch_day: int = Field(9, ge=1, le=89)
     windows: list[list[str]] = Field(default_factory=lambda: DEFAULT_TEMPLATE["windows"], min_length=1, max_length=8)
     rate18: float = Field(0.5, ge=0.01, le=0.99)
@@ -374,6 +501,7 @@ def shutdown(model: ShutdownInput, background: BackgroundTasks):
 @app.get("/api/state")
 def state():
     with database() as db:
+        migrate_stock_renewal_defaults(db)
         settings = settings_of(db)
         now = now_of(db)
         injection.refresh_due(db, sys.modules[__name__])
@@ -384,12 +512,13 @@ def state():
             temps = temperatures_of(db, c["id"])
             c["temperatures"], c["logs"] = temps, logs_of(db, c["id"])
             c["temperature"] = temps[-1]["temperature"] if temps else c["initial_temperature"]
-            c["calendar_day"] = (now.date() - date.fromisoformat(c["setup_date"])).days
+            c["calendar_day"] = calendar_day_index(start_of(c), now)
             c["effective_age"] = round(effective_age(c, temps, now), 1)
             c["clock"] = virgin_clock(c, temps, c["logs"], now)
             if (c.get('injection') or {}).get('role') in ('conditioning', 'cage'):
                 anchor = c['injection'].get('started_at')
-                c['injection_day'] = int(RateTimeline(parse(anchor)).elapsed_seconds(now) // 86400) if anchor else None
+                c['injection_day'] = calendar_day_index(parse(anchor), now) if anchor else None
+                c['calendar_day'] = c['injection_day']
             if c['kind'] in ('vial', 'bottle') and c['purpose'] != 'injection':
                 c['eclosion_estimate'] = eclosion_estimate(c, temps)
             if c['kind'] == 'egg_laying':
@@ -567,12 +696,15 @@ def transfer(cid: str, model: TransferInput):
             raise HTTPException(409, 'use_injection_workflow')
         if c['kind'] in ('petri_dish', 'egg_laying') or model.kind in ('petri_dish', 'egg_laying'):
             raise HTTPException(409, 'use_egg_workflow')
-        at = parse(model.setup_date.isoformat() + "T" + (model.setup_time or "00:00"))
+        if not model.setup_time:
+            raise HTTPException(422, 'operation_time_required')
+        at = parse(model.setup_date.isoformat() + "T" + model.setup_time)
         if at < start_of(c) or at > now_of(db):
             raise HTTPException(422, "invalid_action_time")
         if c["status"] != "active":
             raise HTTPException(409, "container_inactive")
         same = model.mode == "transfer"
+        renewing_stock = not same and c['purpose'] == 'stock'
         if same and (c["parents"] != "present" or c["transfer_index"] >= c["template"]["max_transfers"]):
             raise HTTPException(409, "transfer_unavailable")
         data = model.model_dump(exclude={"mode"})
@@ -580,9 +712,9 @@ def transfer(cid: str, model: TransferInput):
             data['temperature_policy'] = c['temperature_policy']
         if model.template is None:
             data['template'] = c['template']
-        if same:
+        if same or renewing_stock:
             data.update(female_genotype=c["female_genotype"], male_genotype=c["male_genotype"], genotype=c["genotype"], purpose=c["purpose"])
-        if model.workflow is None and (same or model.purpose == c['purpose']):
+        if model.workflow is None and (same or renewing_stock or model.purpose == c['purpose']):
             data['workflow'] = {**(c.get('workflow') or Workflow(cross_goal='virgins', transfer_enabled=True).model_dump(mode='json'))}
             if same:
                 # Recording a transfer starts a continuation schedule in the
@@ -592,11 +724,21 @@ def transfer(cid: str, model: TransferInput):
         if same:
             c["parents"] = "transferred"
             save_container(db, c)
+        elif renewing_stock:
+            c['status'] = 'discarded'
+            save_container(db, c)
         log(db, cid, "transfer" if same else "generation", at.isoformat(timespec="minutes"), child["label"])
         for row in db.execute("SELECT payload FROM events WHERE container_id=? AND rule_key=?", (cid, "transfer" if same else "stock")).fetchall():
             e = json.loads(row[0])
-            e["status"] = "done"
-            save_event(db, e)
+            if e['status'] == 'pending':
+                e["status"] = "done"
+                save_event(db, e)
+        if renewing_stock:
+            for row in db.execute('SELECT payload FROM events WHERE container_id=?', (cid,)).fetchall():
+                e = json.loads(row[0])
+                if e['status'] == 'pending':
+                    e.update(status='cancelled', cancel_reason='container_closed')
+                    save_event(db, e)
         reconcile(db, c)
         activity_cleanup.record(db, activity_before, cid)
         return child
@@ -840,6 +982,8 @@ def update_event(eid: str, model: EventUpdate):
             raise HTTPException(409, 'temperature_forbidden')
         if e['kind'] == 'egg_setup' and model.status == 'done':
             raise HTTPException(409, 'egg_setup_activation_required')
+        if e['kind'] == 'stock' and model.status == 'done':
+            raise HTTPException(409, 'stock_renewal_required')
         if e["container_id"] and (model.restore or model.status == "pending") and get_container(db, e["container_id"])["status"] in ("completed", "discarded"):
             raise HTTPException(409, "container_inactive")
         if model.status:

@@ -69,3 +69,25 @@ class RateTimeline:
 def elapsed_target(anchor: datetime, duration: timedelta) -> datetime:
     """Fixed elapsed-time target, without a culture temperature conversion."""
     return RateTimeline(anchor).reaches(duration.total_seconds())
+
+
+def calendar_day_index(anchor: datetime, at: datetime) -> int:
+    """Lab-local Day number; midnight advances it without changing actual age.
+
+    Inputs must already use the same laboratory timezone, as other scheduling
+    inputs do. A future planned anchor has a negative index. This civil-date
+    label is independent of elapsed hours and temperature-adjusted development.
+    """
+    return (at.date() - anchor.date()).days
+
+
+def calendar_day_target(anchor: datetime, day: int) -> datetime:
+    """Start of calendar Day N in the anchor's lab-local timezone.
+
+    Use this only for a rule explicitly defined by calendar day. Keep exact-hour
+    and developmental targets anchored to the original timestamp instead.
+    """
+    if isinstance(day, bool) or not isinstance(day, int) or day < 0:
+        raise ValueError('Calendar day targets must be nonnegative integers')
+    midnight = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+    return elapsed_target(midnight, timedelta(days=day))

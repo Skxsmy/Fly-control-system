@@ -89,9 +89,9 @@ def test_cage_timer_starts_at_collection_and_renewal_uses_actual_time(workflow_c
     source, bottle = start(client)
     clock['now'] = datetime(2026, 9, 11, 17, 45)
     assert do(client, source, 'injection_collect', '2026-09-11T17:45', female_count=200, male_count=60).status_code == 200
-    clock['now'] = datetime(2026, 9, 15, 17, 44)
+    clock['now'] = datetime(2026, 9, 14, 23, 59)
     assert not any(c['kind'] == 'cage' for c in state(client)['containers'])
-    clock['now'] = datetime(2026, 9, 15, 17, 45)
+    clock['now'] = datetime(2026, 9, 15, 0, 0)
     snapshot = state(client)
     cage = next(c for c in snapshot['containers'] if c['kind'] == 'cage')
     assert cage['status'] == 'planned' and cage['injection_day'] == 4
@@ -99,7 +99,9 @@ def test_cage_timer_starts_at_collection_and_renewal_uses_actual_time(workflow_c
     clock['now'] = datetime(2026, 9, 17, 11)
     assert do(client, bottle, 'injection_transfer', '2026-09-17T11:00').status_code == 200
     event = pending(client, cage['id'], 'injection_renew')
-    assert event['due'] == '2026-09-16T17:45'  # late physical transfer does not reset D0
+    assert event['due'] == '2026-09-16T00:00'  # late physical transfer does not reset D0
+    assert event['scheduled_at'] == '2026-09-16T17:45'
+    assert event['all_day'] is True and event['end'] == '2026-09-16T23:59'
     assert do(client, cage, 'injection_renew', '2026-09-17T10:59', event_id=event['id']).status_code == 422
     assert do(client, cage, 'injection_renew', '2026-09-17T11:00', event_id=event['id']).status_code == 200
     assert pending(client, cage['id'], 'injection_embryos')['due'] == '2026-09-17T11:30'

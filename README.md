@@ -40,9 +40,11 @@ Ordinary stock management works offline after installation. AI assistance is opt
 3. Open the container to record transfers, observations, collections, parent removal, or temperature changes.
 4. Check **Today** for due, overdue, and upcoming work. Add custom reminders or reschedule individual tasks as needed.
 
-The setup date is **D0**. Setup time is optional for vials and bottles; egg-laying containers and Petri dishes require a time.
+The setup date is **D0**, and each midnight starts the next Day: a culture set up at 21:00 is D1 three hours later. Exact operation times, egg ages, and temperature-adjusted developmental estimates remain separate. Setup time is optional when first adding vials and bottles. Transfers, renewal, egg-laying containers, and Petri dishes require a time.
 
-Use **Transfer parents** to continue with the same adults; the new container tracks their transfer count and next transfer time. Use **Renew stock culture** to start a fresh stock vial or bottle with the inherited genotype and transfer count **0**. Creating it completes the source's renewal reminder.
+Use **Transfer parents** to continue with the same adults; the new container tracks their transfer count and next transfer time. Use **Renew stock culture** to start a fresh stock vial or bottle with the inherited genotype and transfer count **0**. This completes the renewal reminder and discards the source container while keeping its records.
+
+**Today's work** includes reminders scheduled for today and ongoing stock renewal. **Needs attention** shows unfinished reminders from previous days or collection windows that have already ended.
 
 ## Features
 
@@ -64,7 +66,8 @@ Changing protocol values in **Protocols & settings** updates the affected remind
 
 - **Virgin collection:** one culture day, initially D10, with three windows: **09:00–11:00**, **15:00–15:30**, and **19:00–21:00**.
 - **Third-instar collection:** **25°C-equivalent D5** by default, adjusted by the vial/bottle's temperature history.
-- **Parent transfer:** optional **D3**, with up to two transfers. Stock renewal defaults to **11 days**.
+- **Parent transfer:** optional **D3**, with up to two transfers.
+- **Stock renewal:** starts on calendar **D10** and stays in Today's work until renewed.
 - **Culture checks:** initially D6, including a tissue reminder for bottles.
 - **Petri-dish incubation:** an initial **24–30-hour** estimate applied to the full laying window.
 
@@ -75,11 +78,11 @@ Cooling delays developmental reminders; recording a return to 25°C brings them 
 Open an active vial/bottle and choose **Injection preparation**. The source must be at 25°C; cooling is unavailable during this workflow. Confirm the collected flies' genotype, especially when the source is a cross.
 
 1. Stock renewal is cancelled and **Collect flies** appears for D10–12. The target is at least **200 females**, about **50–67 males**, with female:male **3:1–4:1**. Record the actual counts when collection is complete.
-2. The linked **IB** bottle waits for those flies and yeast. Completing collection starts its D0 at the actual confirmation time and cancels the other collection reminders.
-3. At preparation **D4**, a linked **C** cage with a yeast plate appears as planned. Confirm **Transfer all flies to cage** to activate it and discard the IB bottle. The cage inherits the bottle's D0.
-4. At **D5**, record **Renew yeast plate**. Embryo collection is due **30 minutes after the actual replacement**. On collection, choose to immediately renew the plate and start another 30-minute interval, or finish.
+2. The linked **IB** bottle waits for those flies and yeast. Completing collection records the actual start time, makes that date D0, and cancels the other collection reminders.
+3. At midnight on preparation **D4**, a linked **C** cage with a yeast plate appears as planned. Confirm **Transfer all flies to cage** to activate it and discard the IB bottle. The cage inherits the bottle's D0.
+4. **Renew yeast plate** appears from midnight on **D5**. Embryo collection is due **30 minutes after the actual replacement**. On collection, choose to immediately renew the plate and start another 30-minute interval, or finish.
 
-Source D10–12 retains the effect of temperature history recorded before preparation. Preparation D4/D5 use elapsed time from collection completion. Finishing embryo collection stops the reminders; it does not automatically discard the cage.
+Source D10–12 retains the effect of temperature history recorded before preparation. D4/D5 reminders also show their original target time. Finishing embryo collection stops the reminders; it does not automatically discard the cage.
 
 ## Optional AI assistant
 

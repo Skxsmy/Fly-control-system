@@ -107,6 +107,7 @@ export function ContainerForm({state, source, mode, eggBatch, close, saved}: {st
   const hourly = kind === 'petri_dish' || kind === 'egg_laying';
   const injectionChild = !!source?.injection && source.injection.role !== 'source';
   const edit = mode === 'edit';
+  const exactSetupTime = hourly || mode === 'transfer' || mode === 'generation' || mode === 'renew';
   const editableStart = !injectionChild && (!edit || source?.status === 'planned' || (kind === 'egg_laying' && source?.setup_time_review_required));
   const [useWorkflow, setUseWorkflow] = useState(!edit || !!source?.workflow);
   const [crossGoal, setCrossGoal] = useState<Workflow['cross_goal']>(source?.workflow?.cross_goal || (edit ? 'virgins' : 'score'));
@@ -124,9 +125,10 @@ export function ContainerForm({state, source, mode, eggBatch, close, saved}: {st
         {!edit && <Field label={t('container.initialTemperature')}><select name="initial_temperature" defaultValue={source?.temperature || 25}><option value="25">25°C</option><option value="18">18°C</option></select></Field>}
       </div>
       {kind === 'petri_dish' && !edit && <Field label={t('eggs.source')}><select value={batchId} onChange={e => setBatchId(e.target.value)}><option value="">{t('eggs.external')}</option>{state.egg_batches.filter(b => b.status === 'collected').map(b => <option key={b.id} value={b.id}>{b.label}</option>)}</select></Field>}
-      {purpose === 'cross' ? <div className="form-grid"><Field label={t('container.female')}><input name="female_genotype" required defaultValue={source?.female_genotype} readOnly={mode === 'transfer'} list="known-genotypes"/></Field><Field label={t('container.male')}><input name="male_genotype" required defaultValue={source?.male_genotype} readOnly={mode === 'transfer'} list="known-genotypes"/></Field></div> : <Field label={t(kind === 'egg_laying' ? 'eggs.knownGenotype' : 'container.genotype')}><input key={`${kind}-${batchId}`} name="genotype" required defaultValue={batch?.genotype || source?.genotype} readOnly={mode === 'transfer'} list="known-genotypes"/></Field>}
+      {purpose === 'cross' ? <div className="form-grid"><Field label={t('container.female')}><input name="female_genotype" required defaultValue={source?.female_genotype} readOnly={mode === 'transfer' || mode === 'renew'} list="known-genotypes"/></Field><Field label={t('container.male')}><input name="male_genotype" required defaultValue={source?.male_genotype} readOnly={mode === 'transfer' || mode === 'renew'} list="known-genotypes"/></Field></div> : <Field label={t(kind === 'egg_laying' ? 'eggs.knownGenotype' : 'container.genotype')}><input key={`${kind}-${batchId}`} name="genotype" required defaultValue={batch?.genotype || source?.genotype} readOnly={mode === 'transfer' || mode === 'renew'} list="known-genotypes"/></Field>}
       <datalist id="known-genotypes">{[...new Set(state.containers.flatMap(c => [c.genotype, c.female_genotype, c.male_genotype]).filter(Boolean))].map(g => <option key={g} value={g} aria-label={g}/>)}</datalist>
-      {editableStart && <div className="form-grid"><Field label={t(kind === 'petri_dish' ? 'eggs.dishSetup' : kind === 'egg_laying' ? 'eggs.startDate' : 'container.setup')}><input name="setup_date" type="date" defaultValue={edit ? source?.setup_date : state.now.slice(0, 10)} required max={mode && !edit ? state.now.slice(0, 10) : undefined}/></Field><Field label={`${t('container.setupTime')}${hourly ? '' : ` · ${t('common.optional')}`}`}><input name="setup_time" type="time" required={hourly} defaultValue={edit ? source?.setup_time || '' : mode || hourly ? state.now.slice(11, 16) : ''}/></Field></div>}
+      {editableStart && <div className="form-grid"><Field label={t(kind === 'petri_dish' ? 'eggs.dishSetup' : kind === 'egg_laying' ? 'eggs.startDate' : 'container.setup')}><input name="setup_date" type="date" defaultValue={edit ? source?.setup_date : state.now.slice(0, 10)} required max={mode && !edit ? state.now.slice(0, 10) : undefined}/></Field><Field label={`${t('container.setupTime')}${exactSetupTime ? '' : ` · ${t('common.optional')}`}`}><input name="setup_time" type="time" required={exactSetupTime} defaultValue={edit ? source?.setup_time || '' : mode || hourly ? state.now.slice(11, 16) : ''}/></Field></div>}
+      {mode === 'renew' && source && <p className="notice warning">{t('stock.renewConsequence', {label: source.label})}</p>}
       {(mode === 'generation' || mode === 'renew') && <dl className="detail-facts"><div><dt>{t('container.transfers')}</dt><dd>0</dd></div></dl>}
       {kind === 'egg_laying' && source?.genotype_review_required && <p className="notice warning">{t('eggs.genotypeReview')} {t('eggs.legacyGenotypes', {female:source.female_genotype, male:source.male_genotype})}</p>}
       {kind === 'egg_laying' && source?.setup_time_review_required && <p className="notice warning">{t('eggs.timeReview')}</p>}
@@ -166,6 +168,7 @@ export function ActionForm({culture, action, event, now, linkedPlanned = [], clo
 }
 
 export function ReminderForm({state, event, cultureId, date, batch, close, saved}: {state: AppState; event?: Task; cultureId?: string; date?: string; batch?: EggBatch; close: () => void; saved: () => Promise<void>}) {
+  const openEnded = !!event?.open_ended;
   const [start, setStart] = useState(event?.due.slice(0, 16) || `${date || state.now.slice(0, 10)}T09:00`);
   const [end, setEnd] = useState(event?.end.slice(0, 16) || `${date || state.now.slice(0, 10)}T09:30`);
   const original = useRef({start, end});
@@ -178,13 +181,13 @@ export function ReminderForm({state, event, cultureId, date, batch, close, saved
   return <Modal title={t(event ? 'task.move' : 'common.newTask')} description={event ? [state.containers.find(c => c.id === event.container_id)?.label, event.title || t(`task.${event.kind}`), event.batch_label].filter(Boolean).join(' · ') : undefined} close={close}>
     <Form close={close} submit={async form => {
       const due = fieldValue(form, 'due');
-      const body = {title: fieldValue(form, 'title'), container_id: batch?.source_id || (fieldValue(form, 'container_id') || '') || null, egg_batch_id: batch?.id, due, end: keepDuration ? endAfterMove(due, original.current.start, original.current.end) : fieldValue(form, 'end'), critical: form.get('critical') === 'on'};
+      const body = {title: fieldValue(form, 'title'), container_id: batch?.source_id || (fieldValue(form, 'container_id') || '') || null, egg_batch_id: batch?.id, due, end: openEnded ? due : keepDuration ? endAfterMove(due, original.current.start, original.current.end) : fieldValue(form, 'end'), critical: form.get('critical') === 'on'};
       await api(event ? `/events/${event.id}` : '/events', event ? 'PATCH' : 'POST', body); await saved(); close();
     }}>
       {!event && <><Field label={t('task.title')}><input name="title" required maxLength={200} defaultValue={batch ? `${t('purpose.imaging')} · ${batch.label}` : ''}/></Field><Field label={t('container.id')}><select name="container_id" disabled={!!batch} defaultValue={batch?.source_id || cultureId || ''}><option value="">{t('task.general')}</option>{state.containers.filter(c => ['active', 'planned'].includes(c.status)).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></Field></>}
-      {event && <><p className="section-help">{t('task.rescheduleHelp')}</p><label className="check-label"><input type="checkbox" checked={keepDuration} onChange={e => setKeepDuration(e.target.checked)}/>{t('task.keepDuration')}</label></>}
+      {event && <><p className="section-help">{t('task.rescheduleHelp')}</p>{!openEnded && <label className="check-label"><input type="checkbox" checked={keepDuration} onChange={e => setKeepDuration(e.target.checked)}/>{t('task.keepDuration')}</label>}</>}
       <Field label={t('task.start')}><input name="due" type="datetime-local" value={start} onChange={e => moveStart(e.target.value)} onInput={e => moveStart(e.currentTarget.value)} onBlur={e => moveStart(e.target.value)} required/></Field>
-      <Field label={t('task.end')}><input name="end" type="datetime-local" value={end} readOnly={keepDuration} onChange={e => setEnd(e.target.value)} required min={start}/></Field>
+      {!openEnded && <Field label={t('task.end')}><input name="end" type="datetime-local" value={end} readOnly={keepDuration} onChange={e => setEnd(e.target.value)} required min={start}/></Field>}
       {!event && <label className="check-label"><input name="critical" type="checkbox"/>{t('task.critical')}</label>}
     </Form>
   </Modal>;

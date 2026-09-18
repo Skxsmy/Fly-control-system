@@ -117,7 +117,7 @@ def test_stock_maintenance_has_no_parental_cross_or_collection_schedule(workflow
     pending = events_for(client, stock, status="pending")
     assert stock["workflow"]["transfer_enabled"] is False
     assert {event["kind"] for event in pending} == {"tissue", "stock"}
-    assert next(event for event in pending if event["kind"] == "stock")["due"] == "2026-09-12T09:00"
+    assert next(event for event in pending if event["kind"] == "stock")["due"] == "2026-09-11T00:00"
 
 
 def test_egg_and_dish_workflows_do_not_inherit_f1_or_virgin_tasks(workflow_client):

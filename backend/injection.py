@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, NaiveDatetime, field_serializer, field_validator
 
 from . import activity_cleanup
-from .timing import elapsed_target
+from .timing import calendar_day_target, elapsed_target
 
 
 class InjectionState(BaseModel):
@@ -65,6 +65,14 @@ def generated_events(container, temperatures):
                        'end': (end or due).isoformat(timespec='minutes'), 'critical': True,
                        'basis': basis, 'title': '', 'all_day': all_day})
 
+    def add_handling_day(key, kind, day):
+        anchor = parse(state['started_at'])
+        due = calendar_day_target(anchor, day)
+        add(key, kind, due, due.replace(hour=23, minute=59), 'calendar', True)
+        # Retain the original elapsed-time reference while opening the day's
+        # handling task at midnight. Actual handling is always recorded separately.
+        events[-1]['scheduled_at'] = elapsed_target(anchor, timedelta(days=day)).isoformat(timespec='minutes')
+
     if state['role'] == 'source':
         ordinary = {key: value for key, value in container.items() if key != 'injection'}
         # Handling/checks remain; the source's harvesting outcome is now this chain.
@@ -76,11 +84,10 @@ def generated_events(container, temperatures):
                 add(f'injection-collect-{day}', 'injection_collect', datetime.combine(target, time.min),
                     datetime.combine(target, time(23, 59)), 'development', True)
     elif state['role'] == 'conditioning' and state['phase'] == 'conditioning':
-        add('injection-transfer', 'injection_transfer', elapsed_target(parse(state['started_at']), timedelta(days=4)))
+        add_handling_day('injection-transfer', 'injection_transfer', 4)
     elif state['role'] == 'cage':
         if state['phase'] == 'renew':
-            add(f'injection-renew-{state["cycle"]}', 'injection_renew',
-                elapsed_target(parse(state['started_at']), timedelta(days=5)))
+            add_handling_day(f'injection-renew-{state["cycle"]}', 'injection_renew', 5)
         elif state['phase'] == 'embryos':
             add(f'injection-embryos-{state["cycle"]}', 'injection_embryos',
                 elapsed_target(parse(state['renewed_at']), timedelta(minutes=30)))
@@ -128,7 +135,7 @@ def refresh_due(db, api):
         state = bottle.get('injection') or {}
         if (bottle['status'] == 'active' and state.get('role') == 'conditioning'
                 and state.get('phase') == 'conditioning'
-                and api.now_of(db) >= elapsed_target(api.parse(state['started_at']), timedelta(days=4))):
+                and api.now_of(db) >= calendar_day_target(api.parse(state['started_at']), 4)):
             _ensure_cage(db, api, bottle)
 
 

@@ -374,6 +374,13 @@ def _validate_records(rows, services):
             _invalid()
         if type(value.get('critical')) is not bool or type(value.get('pinned')) is not bool:
             _invalid()
+        for key in ('all_day', 'open_ended'):
+            if key in value and type(value[key]) is not bool:
+                _invalid()
+        if value.get('open_ended') and value['kind'] != 'stock':
+            _invalid()
+        if value.get('scheduled_at') is not None:
+            _stamp(value['scheduled_at'])
         if _stamp(value['end']) < _stamp(value['due']):
             _invalid()
         if value.get('egg_batch_id'):

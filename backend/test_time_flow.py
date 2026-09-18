@@ -30,7 +30,7 @@ def test_import_existing_culture_preserves_all_initial_state(lab):
     assert imported['setup_time'] is None and imported['clock']['state'] == 'unknown'
     assert not any(e['kind'] == 'transfer' for e in state['events'])
     assert next(e for e in state['events'] if e['kind'] == 'tissue')['due'] == '2026-09-27T09:00'
-    assert client.post(f"/api/containers/{c['id']}/transfer", json={'setup_date':'2026-09-21','female_genotype':'A','male_genotype':'B'}).status_code == 409
+    assert client.post(f"/api/containers/{c['id']}/transfer", json={'setup_date':'2026-09-21','setup_time':'09:00','female_genotype':'A','male_genotype':'B'}).status_code == 409
 
 @pytest.mark.parametrize('state', ['larvae','pupae','eclosion'])
 def test_observation_does_not_invent_a_new_d0(lab, state):

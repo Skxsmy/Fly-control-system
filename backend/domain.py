@@ -1,10 +1,10 @@
 """Deterministic, lab-local scheduling. Estimates are not biological guarantees."""
 from datetime import date, datetime, time, timedelta
-from .timing import RateTimeline, elapsed_target
+from .timing import RateTimeline, elapsed_target, calendar_day_target
 
 DEFAULT_TEMPLATE = {
     "transfer_day": 3, "max_transfers": 2, "check_day": 6,
-    "collection_day": 10, "collection_days": 1, "stock_interval": 11,
+    "collection_day": 10, "collection_days": 1, "stock_interval": 10,
     "windows": [["09:00", "11:00"], ["15:00", "15:30"], ["19:00", "21:00"]],
     "rate18": 0.5, "virgin_hours25": 8, "virgin_hours18": 16,
     "watch_day": 9,
@@ -104,8 +104,9 @@ def generated_events(container, temperatures):
     check = forecast(container, temperatures, template["check_day"]).replace(hour=9, minute=0)
     add("check", "tissue" if container["kind"] == "bottle" else "check", check, basis="development")
     if container["purpose"] == "stock":
-        due = elapsed_target(origin, timedelta(days=template["stock_interval"])).replace(hour=9, minute=0)
+        due = calendar_day_target(origin, template["stock_interval"])
         add("stock", "stock", due)
+        events[-1].update(all_day=True, open_ended=True)
     else:
         watch = forecast(container, temperatures, template["watch_day"]).replace(hour=9, minute=0)
         add("watch", "watch", watch, critical=True, basis="development")
@@ -145,6 +146,9 @@ def available(at, settings, exceptions, duration=15):
     return any(a <= at and at + timedelta(minutes=duration) <= b for a, b in available_windows(at.date(), settings, exceptions))
 
 def event_conflict(event, settings, exceptions):
+    if event.get('open_ended'):
+        # Renewal has a start day, not a missed collection deadline.
+        return False
     start, end = parse(event["due"]), parse(event["end"])
     if end <= start:
         end = start + timedelta(minutes=15)

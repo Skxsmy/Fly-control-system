@@ -23,6 +23,23 @@ def transfer_events(client, cid):
             if event['container_id'] == cid and event['kind'] == 'transfer']
 
 
+@pytest.mark.parametrize('kind', ['vial', 'bottle'])
+@pytest.mark.parametrize('purpose', ['stock', 'cross'])
+@pytest.mark.parametrize('mode', ['transfer', 'generation'])
+def test_recorded_transfer_or_generation_requires_actual_time(client, kind, purpose, mode):
+    source = create(client, kind=kind, purpose=purpose, genotype='w1118')
+    before = snapshot(client)
+    payload = {
+        'mode': mode, 'kind': kind, 'purpose': purpose, 'genotype': source['genotype'],
+        'female_genotype': source['female_genotype'], 'male_genotype': source['male_genotype'],
+        'setup_date': '2026-09-03',
+    }
+    for missing_time in ({}, {'setup_time': None}, {'setup_time': ''}):
+        response = client.post(f"/api/containers/{source['id']}/transfer", json={**payload, **missing_time})
+        assert response.status_code == 422 and response.json()['detail'] == 'operation_time_required'
+        assert snapshot(client) == before
+
+
 @pytest.mark.parametrize('source_kind', ['vial', 'bottle'])
 @pytest.mark.parametrize('destination_kind', ['vial', 'bottle'])
 def test_manual_stock_transfer_starts_next_reminder_and_stops_at_limit(client, source_kind, destination_kind):
@@ -216,15 +233,18 @@ def test_stock_renewal_creates_selected_container_and_restarts_cohort(client, so
 
     state = snapshot(client)
     parent = next(item for item in state['containers'] if item['id'] == source['id'])
+    assert parent['status'] == 'discarded'
     for field in ('parents', 'stage', 'transfer_index', 'cohort_id', 'setup_date', 'setup_time'):
         assert parent[field] == source[field]
     assert any(item['action'] == 'generation' and item['notes'] == child['label'] for item in parent['logs'])
     after = {event['id']: event for event in state['events'] if event['container_id'] == source['id']}
-    assert after == {eid: {**event, 'status': 'done'} if eid == renewal['id'] else event
+    assert after == {eid: {**event, 'status': 'done', 'conflict': False} if eid == renewal['id']
+                     else {**event, 'status': 'cancelled', 'cancel_reason': 'container_closed', 'conflict': False}
                      for eid, event in original.items()}
     child_events = [event for event in state['events'] if event['container_id'] == child['id']]
     next_renewal, = [event for event in child_events if event['kind'] == 'stock']
-    assert next_renewal['due'] == '2026-09-18T09:00' and next_renewal['status'] == 'pending'
+    assert next_renewal['due'] == '2026-09-18T00:00' and next_renewal['status'] == 'pending'
+    assert next_renewal['open_ended'] and next_renewal['all_day']
     assert not any(event['kind'] == 'transfer' for event in child_events)
     assert any(event['kind'] == ('tissue' if destination_kind == 'bottle' else 'check') for event in child_events)
 
@@ -266,3 +286,4 @@ def test_stock_renewal_undo_restores_reminder_after_mistaken_child_is_deleted(cl
     assert {event['id']: event for event in state['events'] if event['container_id'] == source['id']} == before
     parent = next(item for item in state['containers'] if item['id'] == source['id'])
     assert parent['transfer_index'] == 2 and parent['cohort_id'] == source['cohort_id']
+    assert parent['status'] == 'active'

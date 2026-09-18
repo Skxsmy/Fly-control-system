@@ -58,6 +58,12 @@ forecast, and return to 25°C advances it relative to continued cooling while
 retaining the delay already accumulated. Manual reminder times stay fixed.
 This is an estimated collection target, not observed stage confirmation.
 Egg-laying and Petri-dish timing do not use this temperature conversion.
+Calendar Day labels advance at laboratory-local midnight for every container.
+They are separate from precise elapsed time and temperature-adjusted development;
+actual setup and operation timestamps are retained. Stock renewal starts on
+calendar D10 by default and remains pending until renewed. Renewal creates a
+vial/bottle with inherited genotype and transfer count zero, then discards the
+source culture while retaining its history.
 The researcher-defined injection preparation workflow is available: source vial/
 bottle D10-12 Collect flies (not virgins), target >=200 females, about 50-67 males,
 female:male 3:1-4:1; collected adults with yeast in a linked IB bottle; all adults
@@ -67,7 +73,8 @@ renewal at that same actual timestamp, then another 30-minute interval. The sour
 and linked housing stay at 25°C during preparation. Earlier temperature history
 still affects source D10-12. Injection started_at is actual fly-collection
 completion: the IB bottle has no running D0 before that; cage D0 inherits it.
-D4/D5 use elapsed time from this anchor, not new developmental estimates. A planned
+D4/D5 tasks open at midnight of those calendar days; their original exact target
+times remain visible. The 30-minute embryo interval uses actual elapsed time. A planned
 cage is not an actual transfer; only transfer confirmation discards the IB bottle.
 Subsequent transgenesis steps remain deferred until defined by the researcher.
 First-instar dissection may use source adults -> egg-laying -> egg batch

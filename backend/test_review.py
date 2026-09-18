@@ -47,8 +47,10 @@ def test_completed_collection_does_not_block_temperature_search(client):
 
 def test_transfer_cannot_silently_drop_temperature_restriction(client):
     c = create(client, temperature_policy='forbidden')
-    body = {'setup_date':'2026-09-05','purpose':'cross','female_genotype':c['female_genotype'],'male_genotype':c['male_genotype']}
-    child = client.post(f"/api/containers/{c['id']}/transfer", json=body).json()
+    body = {'setup_date':'2026-09-05','setup_time':'10:00','purpose':'cross','female_genotype':c['female_genotype'],'male_genotype':c['male_genotype']}
+    response = client.post(f"/api/containers/{c['id']}/transfer", json=body)
+    assert response.status_code == 200, response.text
+    child = response.json()
     assert child['temperature_policy'] == 'forbidden'
 
 def test_edited_label_is_normalized_before_unique_check(client):

@@ -102,11 +102,13 @@ def test_complete_chain_uses_actual_anchors_and_continuation_immediately_renews(
     assert [e["status"] for e in collection_after].count("done") == 1
     assert [e["status"] for e in collection_after].count("cancelled") == 2
     transfer = sole_pending(client, bottle, "injection_transfer")
-    assert transfer["due"] == "2026-09-15T09:17"
+    assert transfer["due"] == "2026-09-15T00:00"
+    assert transfer["scheduled_at"] == "2026-09-15T09:17"
+    assert transfer["all_day"] is True and transfer["end"] == "2026-09-15T23:59"
 
-    set_now(clock, "2026-09-15T09:16")
+    set_now(clock, "2026-09-14T23:59")
     assert children(client, bottle) == []
-    set_now(clock, "2026-09-15T09:17")
+    set_now(clock, "2026-09-15T00:00")
     cage = children(client, bottle)[0]
     assert cage["kind"] == "cage" and cage["label"].startswith("C")
     assert cage["status"] == "planned"
@@ -123,7 +125,9 @@ def test_complete_chain_uses_actual_anchors_and_continuation_immediately_renews(
     assert current(client, cage)["status"] == "active"
     # A late physical transfer must not reset the inherited conditioning clock.
     renewal = sole_pending(client, cage, "injection_renew")
-    assert renewal["due"] == "2026-09-16T09:17"
+    assert renewal["due"] == "2026-09-16T00:00"
+    assert renewal["scheduled_at"] == "2026-09-16T09:17"
+    assert renewal["all_day"] is True and renewal["end"] == "2026-09-16T23:59"
     operate(client, cage, "injection_renew", "2026-09-16T12:00", event_id=renewal["id"])
     embryos = sole_pending(client, cage, "injection_embryos")
     assert embryos["due"] == "2026-09-16T12:30"
@@ -442,7 +446,9 @@ def test_manual_early_transfer_creates_cage_and_preserves_original_day_zero(work
     cage = children(client, bottle)[0]
     assert cage["status"] == "active" and cage["injection"]["transferred_at"] == "2026-09-13T14:35"
     assert datetime.fromisoformat(cage["injection"]["started_at"]) == datetime(2026, 9, 11, 8, 15)
-    assert sole_pending(client, cage, "injection_renew")["due"] == "2026-09-16T08:15"
+    renewal = sole_pending(client, cage, "injection_renew")
+    assert renewal["due"] == "2026-09-16T00:00"
+    assert renewal["scheduled_at"] == "2026-09-16T08:15"
     assert current(client, bottle)["status"] == "discarded"
 
 
