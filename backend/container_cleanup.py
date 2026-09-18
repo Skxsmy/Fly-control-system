@@ -17,17 +17,19 @@ from fastapi import HTTPException
 
 
 OWNED_TABLES = ("temperatures", "logs", "events", "plans")
-LABEL_PREFIXES = {"vial": "V", "bottle": "B", "petri_dish": "P", "egg_laying": "E"}
+LABEL_PREFIXES = {"vial": "V", "bottle": "B", "petri_dish": "P", "egg_laying": "E", "cage": "C"}
 
 
-def next_container_label(db, kind):
+def next_container_label(db, kind, namespace=None):
     """Use the lowest free standard label, including labels held by other kinds.
 
     Archived containers still reserve their labels.  The database UNIQUE
     constraint and the caller's write transaction remain the final safeguards.
     Internal container IDs are independent and must always be newly generated.
     """
-    prefix = LABEL_PREFIXES[kind]
+    if namespace is not None and (namespace != 'injection' or kind != 'bottle'):
+        raise ValueError('invalid_container_namespace')
+    prefix = 'IB' if namespace == 'injection' else LABEL_PREFIXES[kind]
     labels = {row[0] for row in db.execute("SELECT label FROM containers")}
     number = 1
     while f"{prefix}{number:04}" in labels:
@@ -85,8 +87,23 @@ def _deletion_snapshot(db, cid):
             blockers.append({"type": "egg_batch", "id": row["id"],
                              "label": value.get("label", row["id"]), "reasons": ["source_container"]})
 
+    linked_parent = None
+    value = json.loads(container['payload'])
+    state = value.get('injection') or {}
+    if value.get('status') == 'planned' and state.get('phase') in ('awaiting_flies', 'awaiting_transfer'):
+        parent_row = next((row for row in containers if row['id'] == value.get('source_id')), None)
+        if parent_row:
+            parent = json.loads(parent_row['payload'])
+            parent_state = parent.get('injection') or {}
+            expected = ('source', 'collecting') if state.get('role') == 'conditioning' else ('conditioning', 'conditioning')
+            if (parent_state.get('role'), parent_state.get('phase')) == expected:
+                kind = 'injection_collect' if expected[0] == 'source' else 'injection_transfer'
+                reminders = [row for row in _rows(db, 'SELECT * FROM events WHERE container_id=? ORDER BY id', (parent['id'],))
+                             if (event := json.loads(row['payload']))['kind'] == kind and event['status'] == 'pending']
+                linked_parent = {'container': parent_row, 'events': reminders,
+                                 'effect': 'stop_injection_collection' if expected[0] == 'source' else 'stop_injection_conditioning'}
     return {"version": 1, "container": container, "owned": owned, "blockers": blockers,
-            "undo_records": undo_records}
+            "undo_records": undo_records, 'linked_parent': linked_parent}
 
 
 def preview_container_deletion(db, cid):
@@ -94,9 +111,12 @@ def preview_container_deletion(db, cid):
     snapshot = _deletion_snapshot(db, cid)
     fingerprint = hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False,
                                             separators=(",", ":")).encode("utf-8")).hexdigest()
+    parent = snapshot['linked_parent']
     return {"id": cid, "label": snapshot["container"]["label"],
             "counts": {"containers": 1, **{table: len(rows) for table, rows in snapshot["owned"].items()}},
             "blockers": snapshot["blockers"], "can_delete": not snapshot["blockers"],
+            'effects': [{'kind': parent['effect'], 'container_id': parent['container']['id'],
+                         'label': parent['container']['label']}] if parent else [],
             "fingerprint": fingerprint}
 
 
@@ -130,7 +150,7 @@ def _backup_before_delete(db, backup_dir):
         raise HTTPException(500, "deletion_backup_failed") from error
 
 
-def delete_container_permanently(db, cid, confirmation_label, fingerprint, backup_dir):
+def delete_container_permanently(db, cid, confirmation_label, fingerprint, backup_dir, at=None):
     """Validate an exact preview, back up, and atomically delete owned records.
 
     This operation is intentionally distinct from completing/discarding a
@@ -149,6 +169,16 @@ def delete_container_permanently(db, cid, confirmation_label, fingerprint, backu
     backup_path = _backup_before_delete(db, backup_dir)
     db.execute("SAVEPOINT permanent_container_delete")
     try:
+        affected = _deletion_snapshot(db, cid)['linked_parent']
+        if affected:
+            parent_row = affected['container']
+            parent = json.loads(parent_row['payload'])
+            parent['injection'].update(phase='finished', finished_at=at or datetime.now().isoformat(timespec='minutes'))
+            db.execute('UPDATE containers SET payload=? WHERE id=?', (json.dumps(parent, ensure_ascii=False), parent['id']))
+            for row in affected['events']:
+                event = json.loads(row['payload'])
+                event.update(status='cancelled', cancel_reason='injection_destination_deleted')
+                db.execute('UPDATE events SET payload=? WHERE id=?', (json.dumps(event, ensure_ascii=False), row['id']))
         for activity in db.execute('SELECT id FROM logs WHERE container_id=?', (cid,)).fetchall():
             db.execute('DELETE FROM meta WHERE key=?', ('activity_undo:' + activity[0],))
         for table in OWNED_TABLES:
@@ -160,4 +190,5 @@ def delete_container_permanently(db, cid, confirmation_label, fingerprint, backu
         db.execute("ROLLBACK TO SAVEPOINT permanent_container_delete")
         db.execute("RELEASE SAVEPOINT permanent_container_delete")
         raise
-    return {"deleted": cid, "label": preview["label"], "counts": preview["counts"], "backup": backup_path.name}
+    return {"deleted": cid, "label": preview["label"], "counts": preview["counts"],
+            'effects': preview['effects'], "backup": backup_path.name}

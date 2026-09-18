@@ -105,15 +105,16 @@ export function ContainerForm({state, source, mode, eggBatch, close, saved}: {st
   const [batchId, setBatchId] = useState(eggBatch?.id || source?.egg_batch_id || '');
   const batch = kind === 'petri_dish' ? state.egg_batches.find(b => b.id === batchId) : undefined;
   const hourly = kind === 'petri_dish' || kind === 'egg_laying';
+  const injectionChild = !!source?.injection && source.injection.role !== 'source';
   const edit = mode === 'edit';
-  const editableStart = !edit || source?.status === 'planned' || (kind === 'egg_laying' && source?.setup_time_review_required);
+  const editableStart = !injectionChild && (!edit || source?.status === 'planned' || (kind === 'egg_laying' && source?.setup_time_review_required));
   const [useWorkflow, setUseWorkflow] = useState(!edit || !!source?.workflow);
   const [crossGoal, setCrossGoal] = useState<Workflow['cross_goal']>(source?.workflow?.cross_goal || (edit ? 'virgins' : 'score'));
   return <Modal title={t(edit ? 'container.edit' : mode === 'transfer' ? 'container.transfer' : mode === 'renew' ? 'task.stock' : mode === 'generation' ? 'container.nextGeneration' : 'common.newContainer')} description={source ? edit ? source.label : `${t('container.source')}: ${source.label}` : undefined} close={close} wide>
     <Form close={close} label={t(edit ? 'common.save' : 'common.create')} submit={async form => {
       const payload = {label: fieldValue(form, 'label'), kind, purpose, genotype: (fieldValue(form, 'genotype') || ''), female_genotype: (fieldValue(form, 'female_genotype') || ''), male_genotype: (fieldValue(form, 'male_genotype') || ''),
         ...(editableStart ? {setup_date: fieldValue(form, 'setup_date'), setup_time: (fieldValue(form, 'setup_time') || '') || null} : {}), initial_temperature: Number(form.get('initial_temperature')),
-        temperature_policy: fieldValue(form, 'temperature_policy'), notes: fieldValue(form, 'notes'), template: hourly ? source?.template || state.settings.template : templateFrom(form, source?.template || state.settings.template), ...(!hourly && useWorkflow ? {workflow:workflowFrom(form,crossGoal,source?.workflow)} : {}), ...(kind === 'petri_dish' ? {incubation: incubationFrom(form), egg_batch_id: batchId || null} : {}), ...(mode ? {mode: mode === 'renew' ? 'generation' : mode} : {initial_status: fieldValue(form, 'initial_status'), parents: kind === 'petri_dish' ? 'removed' : fieldValue(form, 'parents'), stage: fieldValue(form, 'stage'), transfer_index: Number(form.get('transfer_index'))})};
+        temperature_policy: source?.injection ? source.temperature_policy : fieldValue(form, 'temperature_policy'), notes: fieldValue(form, 'notes'), template: hourly || injectionChild ? source?.template || state.settings.template : templateFrom(form, source?.template || state.settings.template), ...(!hourly && !injectionChild && useWorkflow ? {workflow:workflowFrom(form,crossGoal,source?.workflow)} : {}), ...(kind === 'petri_dish' ? {incubation: incubationFrom(form), egg_batch_id: batchId || null} : {}), ...(mode ? {mode: mode === 'renew' ? 'generation' : mode} : {initial_status: fieldValue(form, 'initial_status'), parents: kind === 'petri_dish' ? 'removed' : fieldValue(form, 'parents'), stage: fieldValue(form, 'stage'), transfer_index: Number(form.get('transfer_index'))})};
       const result = await api<Culture>(edit ? `/containers/${source!.id}` : mode ? `/containers/${source!.id}/transfer` : '/containers', edit ? 'PUT' : 'POST', payload);
       await saved(result.id); close();
     }}>
@@ -136,16 +137,16 @@ export function ContainerForm({state, source, mode, eggBatch, close, saved}: {st
         <Field label={t('container.stage')}><select name="stage" defaultValue="unobserved">{['unobserved', 'first_instar', 'larvae', 'pupae', 'eclosion'].map(x => <option key={x} value={x}>{t(`stage.${x}`)}</option>)}</select></Field>
         {kind !== 'petri_dish' && <Field label={t('container.initialTransfers')}><input name="transfer_index" type="number" min={0} max={20} step={1} defaultValue={0} required/></Field>}
       </div></section>}
-      <Field label={t('temperature.policy')}><select name="temperature_policy" defaultValue={source?.temperature_policy || 'allowed'}><option value="allowed">{t('temperature.allowed')}</option><option value="forbidden">{t('temperature.forbidden')}</option></select></Field>
+      {!source?.injection && <Field label={t('temperature.policy')}><select name="temperature_policy" defaultValue={source?.temperature_policy || 'allowed'}><option value="allowed">{t('temperature.allowed')}</option><option value="forbidden">{t('temperature.forbidden')}</option></select></Field>}
       <Field label={t('common.notes')}><textarea name="notes" rows={2} defaultValue={edit ? source?.notes : ''}/></Field>
-      {!hourly && edit && !source?.workflow && <label className="check-label"><input type="checkbox" checked={useWorkflow} onChange={e => setUseWorkflow(e.target.checked)}/>{t('workflow.upgrade')}</label>}
-      {!hourly && useWorkflow && <WorkflowFields key={purpose} purpose={purpose} value={source?.workflow} goal={crossGoal} setGoal={setCrossGoal} defaultTransferEnabled={mode === 'transfer' ? true : undefined}/>}
-      {!hourly && <details className="form-section"><summary>{t('container.protocol')}</summary><ProtocolFields template={source?.template || state.settings.template} purpose={purpose} goal={useWorkflow ? crossGoal : 'virgins'}/></details>}
+      {!hourly && !injectionChild && edit && !source?.workflow && <label className="check-label"><input type="checkbox" checked={useWorkflow} onChange={e => setUseWorkflow(e.target.checked)}/>{t('workflow.upgrade')}</label>}
+      {!hourly && !injectionChild && useWorkflow && <WorkflowFields key={purpose} purpose={purpose} value={source?.workflow} goal={crossGoal} setGoal={setCrossGoal} defaultTransferEnabled={mode === 'transfer' ? true : undefined}/>}
+      {!hourly && !injectionChild && <details className="form-section"><summary>{t('container.protocol')}</summary><ProtocolFields template={source?.template || state.settings.template} purpose={purpose} goal={useWorkflow ? crossGoal : 'virgins'}/></details>}
     </Form>
   </Modal>;
 }
 
-export function ActionForm({culture, action, event, now, close, saved}: {culture: Culture; action: string; event?: Task; now: string; close: () => void; saved: () => Promise<void>}) {
+export function ActionForm({culture, action, event, now, linkedPlanned = [], close, saved}: {culture: Culture; action: string; event?: Task; now: string; linkedPlanned?: string[]; close: () => void; saved: () => Promise<void>}) {
   const [actionTime, setActionTime] = useState(now.slice(0,16));
   return <Modal title={`${t(action === 'activate' && culture.kind === 'egg_laying' ? 'eggs.recordStart' : `action.${action}`)} · ${culture.label}`} close={close}>
     <Form close={close} label={t('common.record')} submit={async form => {
@@ -158,6 +159,7 @@ export function ActionForm({culture, action, event, now, close, saved}: {culture
       {action === 'collect' && <label className="check-label"><input name="cleared" type="checkbox"/>{t('action.cleared')}</label>}
       {action === 'clear' && <p className="notice">{t('action.clearHint')}</p>}
       {['complete', 'discard'].includes(action) && <p className="notice warning">{t('action.endHint')}</p>}
+      {['complete', 'discard'].includes(action) && linkedPlanned.length > 0 && <p className="notice warning">{t('injection.cancelLinkedPlan', {labels: linkedPlanned.join(', ')})}</p>}
       <Field label={t('common.notes')}><textarea name="notes" rows={3}/></Field>
     </Form>
   </Modal>;

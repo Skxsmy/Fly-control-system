@@ -144,6 +144,89 @@ def _insert_rows(db, rows):
                        [tuple(row[column] for column in columns) for row in rows[table]])
 
 
+def _validate_injection_containers(containers, services):
+    """Validate workflow links outside SQLite's foreign-key columns."""
+    for value in containers.values():
+        injection = value.get('injection')
+        if injection is None:
+            if value['kind'] == 'cage' or value['purpose'] == 'injection':
+                _invalid()
+            continue
+        from .injection import InjectionState
+        InjectionState.model_validate_json(json.dumps(injection), strict=True)
+        if value.get('temperature_policy') != 'forbidden':
+            _invalid()
+        role, phase = injection['role'], injection['phase']
+        started = injection.get('started_at')
+        initiated = _stamp(injection['initiated_at'])
+        if phase == 'finished' and injection.get('finished_at') is None:
+            _invalid()
+        for key in ('started_at', 'renewed_at', 'next_renew_at', 'finished_at', 'transferred_at'):
+            if injection.get(key) is not None and _stamp(injection[key]) < initiated:
+                _invalid()
+        if role == 'source':
+            if (value['kind'] not in ('vial', 'bottle') or value['purpose'] == 'injection'
+                    or phase not in ('collecting', 'finished') or initiated < services.start_of(value)):
+                _invalid()
+            if phase == 'collecting' and started is not None:
+                _invalid()
+            if started and (not injection.get('finished_at') or _stamp(injection['finished_at']) < _stamp(started)):
+                _invalid()
+            continue
+        source = containers.get(value.get('source_id'))
+        if not source or value['purpose'] != 'injection' or value['initial_temperature'] != 25:
+            _invalid()
+        parent = source.get('injection') or {}
+        if role == 'conditioning':
+            if (value['kind'] != 'bottle' or parent.get('role') != 'source'
+                    or phase not in ('awaiting_flies', 'conditioning', 'awaiting_transfer', 'finished')):
+                _invalid()
+            if phase == 'awaiting_flies':
+                if started is not None or value['status'] != 'planned':
+                    _invalid()
+            elif started is None:
+                if phase != 'finished' or value['status'] not in ('completed', 'discarded'):
+                    _invalid()
+            elif not parent.get('started_at') or _stamp(started) != _stamp(parent['started_at']):
+                _invalid()
+        elif role == 'cage':
+            if (value['kind'] != 'cage' or parent.get('role') != 'conditioning'
+                    or phase not in ('awaiting_transfer', 'renew', 'embryos', 'finished')
+                    or started is None or not parent.get('started_at') or _stamp(started) != _stamp(parent['started_at'])):
+                _invalid()
+            if phase == 'awaiting_transfer':
+                if value['status'] != 'planned' or injection.get('transferred_at') is not None:
+                    _invalid()
+            elif injection.get('transferred_at') is None and not (phase == 'finished' and value['status'] in ('completed', 'discarded')):
+                _invalid()
+            if phase == 'embryos' and injection.get('renewed_at') is None:
+                _invalid()
+        if started is not None and services.start_of(value) != _stamp(started):
+            _invalid()
+        if initiated != _stamp(parent['initiated_at']):
+            _invalid()
+    children = {}
+    for value in containers.values():
+        state = value.get('injection') or {}
+        if state.get('role') in ('conditioning', 'cage'):
+            children.setdefault(value['source_id'], []).append(value)
+    for value in containers.values():
+        state = value.get('injection') or {}
+        if state.get('role') not in ('source', 'conditioning'):
+            continue
+        linked = children.get(value['id'], [])
+        # Runtime operations resolve one immediate destination. An ambiguous
+        # link must fail import before it can break state refresh or handling.
+        if len(linked) > 1:
+            _invalid()
+        if state['role'] == 'source' and state['phase'] == 'collecting':
+            if len(linked) != 1 or linked[0]['status'] != 'planned' or linked[0]['injection']['phase'] != 'awaiting_flies':
+                _invalid()
+        if state['role'] == 'conditioning' and state['phase'] == 'conditioning' and linked:
+            if linked[0]['status'] != 'planned' or linked[0]['injection']['phase'] != 'awaiting_transfer':
+                _invalid()
+
+
 def _validate_records(rows, services):
     meta = {row['key']: row['value'] for row in rows['meta']}
     if meta.get('schema_version') != '1' or 'settings' not in meta:
@@ -202,6 +285,7 @@ def _validate_records(rows, services):
                 _invalid()
             seen.add(cursor)
             cursor = containers[cursor]['source_id']
+    _validate_injection_containers(containers, services)
     for row in rows['egg_batches']:
         value = _json_object(row['payload'])
         if value.get('id') != row['id'] or value.get('source_id') != row['source_id']:
@@ -255,6 +339,17 @@ def _validate_records(rows, services):
         if _stamp(row['at']) < services.start_of(containers[row['container_id']]):
             _invalid()
         temperatures[row['container_id']].append(row)
+    for cid, value in containers.items():
+        injection = value.get('injection')
+        if not injection:
+            continue
+        initiated = _stamp(injection['initiated_at'])
+        recorded = sorted(temperatures[cid], key=lambda row: _stamp(row['at']))
+        prior = [row for row in recorded if _stamp(row['at']) <= initiated]
+        if (prior[-1]['temperature'] if prior else value['initial_temperature']) != 25:
+            _invalid()
+        if any(row['temperature'] != 25 and _stamp(row['at']) >= initiated for row in recorded):
+            _invalid()
     for row in rows['events']:
         value = _json_object(row['payload'])
         if any(value.get(key) != row[key] for key in ('id', 'container_id', 'rule_key')):
@@ -264,8 +359,15 @@ def _validate_records(rows, services):
         _text(value['title'], 200, allow_empty=True)
         if value.get('kind') not in ('custom', 'transfer', 'remove', 'check', 'tissue', 'stock', 'watch', 'collect',
                                      'score', 'third_instar', 'egg_setup', 'offspring_ready', 'first_instar',
-                                     'cold', 'warm', 'egg_collect'):
+                                     'cold', 'warm', 'egg_collect', 'injection_collect', 'injection_transfer',
+                                     'injection_renew', 'injection_embryos'):
             _invalid()
+        if value.get('kind', '').startswith('injection_'):
+            owner = containers.get(value['container_id'])
+            expected_role = {'injection_collect': 'source', 'injection_transfer': 'conditioning',
+                             'injection_renew': 'cage', 'injection_embryos': 'cage'}[value['kind']]
+            if not owner or (owner.get('injection') or {}).get('role') != expected_role:
+                _invalid()
         if value.get('status') not in ('pending', 'done', 'skipped', 'disabled', 'cancelled'):
             _invalid()
         if value.get('basis') not in ('manual', 'calendar', 'development', 'hours'):

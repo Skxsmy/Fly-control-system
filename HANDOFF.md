@@ -1,6 +1,6 @@
 # Flykeeper — maintainer and AI handoff
 
-Snapshot: **2026-09-15**. This is a development handoff, not the installation guide. Read [README.md](README.md) for user-facing setup and features, and [AGENTS.md](AGENTS.md) for project conventions. Source code and current tests take precedence over historical review reports.
+Snapshot: **2026-09-18**. This is a development handoff, not the installation guide. Read [README.md](README.md) for user-facing setup and features, and [AGENTS.md](AGENTS.md) for project conventions. Source code and current tests take precedence over historical review reports.
 
 Flykeeper is in **active development**. Expect bugs and incomplete workflows; do not treat prior test results as proof that a new change works.
 
@@ -20,6 +20,7 @@ Flykeeper is in **active development**. Expect bugs and incomplete workflows; do
 | `backend/app.py` | FastAPI routes, validation, SQLite initialization/migrations, atomic mutations and reminder reconciliation |
 | `backend/domain.py` | Clocks, purpose templates, event generation, availability, setup/cooling search, incubation estimates |
 | `backend/timing.py` | Shared piecewise-rate timeline for forward progress and inverse target-time calculations |
+| `backend/injection.py` | Injection preparation models, linked housing, event generation and transactional operations |
 | `backend/activity_cleanup.py` | Activity preview/undo, change journals, legacy corrections and dependency checks |
 | `backend/activity_record_cleanup.py` | Explicit record-only deletion, retained physical work, preview fingerprints and deleted-log protection |
 | `backend/container_cleanup.py` | Permanent deletion, required backup, dependency checks, reusable display IDs |
@@ -27,6 +28,7 @@ Flykeeper is in **active development**. Expect bugs and incomplete workflows; do
 | `backend/ai_assistant.py`, `backend/ai_models.py` | Profiles, protected credentials, context snapshots, read-only chat, model discovery and diagnostics |
 | `frontend/components/fly-app.tsx` | Main navigation, Today, container details, calendar and settings integration |
 | `frontend/components/*-form.tsx`, `fly-forms.tsx` | Container, operation, egg-laying and deletion dialogs |
+| `frontend/components/injection-preparation.tsx` | Integrated preparation entry, actual-operation forms and linked source/bottle/cage view |
 | `frontend/components/assistant-page.tsx`, `ai-settings.tsx` | Integrated assistant and connection UI |
 | `frontend/lib/types.ts`, `ai-types.ts`, `api.ts` | Client contracts and API access |
 | `frontend/lib/i18n/` | English dictionaries and locale registry; missing keys fall back to English |
@@ -87,6 +89,8 @@ Latest temperature-engine validation (2026-09-11): **498 backend tests passed, 1
 
 Settings propagation verification (2026-09-15): **156 targeted backend tests passed**, including 18 new settings cases, temperature histories, transfers, workflows and linked egg sources. Frontend typecheck/build passed. Isolated main-app testing changed collection D10 to D12 through Settings: the existing 25°C vial changed to September 13 and the existing 18°C bottle to September 25 (D0 September 1), retaining three collection windows each. No personal settings were changed for testing.
 
+Injection preparation verification (2026-09-18): full backend suite **591 passed, 1 existing Windows privilege skip**. After adding three final import-cardinality cases, the affected injection/activity/deletion/restore suites passed **216 tests, 1 skip**, including **78 injection cases**. Frontend typecheck, local build, changed-file lint and **11 frontend tests** passed. Isolated main-app time simulation verified planned IB with no running D0, actual collection at September 11 09:17, planned cage on D4, confirmed transfer discarding IB, D5 renewal at 09:25 → embryos at 09:55, collection/renewal at 09:58 → next embryos at 10:28, and stopping with no further cycle reminders. No provider requests were made. Personal records were backed up before launching the updated app under the normal Windows account; all eight table digests remained unchanged.
+
 ## Data, credentials and the running account
 
 - `data/flykeeper.db` holds laboratory records and settings. `FLYKEEPER_DB` selects another database. `.qa/` is for isolated test data.
@@ -137,13 +141,27 @@ Planned offspring egg-laying containers show a source eclosion forecast/check un
 
 Dishes retain the original laying interval. The editable first-instar estimate is laying start + minimum age through laying end + maximum age, initially **24–30 h**. Dish setup does not reset egg age. Temperature mismatch needs review; a hatch estimate does not establish observed stage or dissection suitability.
 
+### Injection preparation
+
+This limited workflow was defined by the researcher on September 18. Do not infer downstream injection or transgenesis procedures. UI entry: an active vial/bottle → **Operations → Injection preparation**. Source purpose and parental genotypes remain unchanged; the user supplies the known collected genotype for the new housing.
+
+- `POST /api/containers/{cid}/injection-preparation` takes `{at, genotype, notes?}`. Source must currently be at 25°C. Its `injection.role` is `source`; the separately numbered `IB####` bottle is immediately created as `planned`, with role `conditioning` and `started_at: null`. The planned row's placeholder setup date is **not** a running D0; UI shows Awaiting collection. Ordinary B labels are not consumed.
+- Starting cancels stock renewal, competing harvest tasks, and pending cold/warm handling reminders. Appropriate parent/check reminders remain. Source and all injection housing forbid cold moves and cooling plans; existing historical cold segments remain in source development calculations. Starting preparation cannot be backdated across a recorded cold interval. Undo restores prior policy/schedules when safe.
+- Source collection keys `injection-collect-10/11/12` use `domain.forecast` independently for each 25°C-equivalent target, then whole-day windows `00:00–23:59`, `all_day: true`. Source remains warm throughout this stage. These are **Collect flies**, not virgin collection; the existing one-day virgin rule is unchanged. Manual rescheduling keeps identity and updates the all-day display flag.
+- `POST /api/containers/{cid}/injection-actions` takes `{action, at, event_id?, female_count?, male_count?, continue_collection?, notes?}`. Supported actions and event kinds: `injection_collect`, `injection_transfer`, `injection_renew`, `injection_embryos`. Cycle actions require the current `event_id`; phase and event checks reject duplicate or stale operations. Actual time cannot precede its physical predecessor or exceed current lab time.
+- Fly collection targets are **at least 200 females**, about **50–67 males**, F:M **3:1–4:1** (researcher corrected the original inverted ratio). Completion requires actual integer counts, with a UI warning for counts outside the target; it does not fabricate totals or hard-block the researcher's confirmation. One completion records placement with yeast, activates the IB bottle, sets its D0/`started_at` to actual completion, and cancels all remaining pending collection tasks, including older overdue copies. No partial-count inventory is implemented.
+- Bottle transfer is `elapsed_target(started_at, 4 days)`. On or after D4, `/api/state` materializes one **planned** `C####` cage with a yeast plate. Time passing never performs the transfer. Confirming `injection_transfer` activates the cage, records actual `transferred_at`, transfers all flies and discards the bottle atomically. A manually early confirmation can create the cage as part of that operation. Cage setup/`started_at` inherits bottle D0 and is never reset by a late transfer.
+- Initial cage plate renewal is `elapsed_target(started_at, 5 days)`, available after transfer. Confirming renewal sets `renewed_at` and schedules embryos using `elapsed_target(renewed_at, 30 minutes)`. `injection_embryos` with `continue_collection: true` records embryo collection **and immediate plate renewal at the same actual timestamp** in one transaction/journal, increments the cycle and schedules another 30-minute collection. False marks the workflow finished without physically discarding the cage.
+- Canonical lineage is `source_id`: source → IB bottle → cage; no reverse pointers. Injection state is typed container JSON. General create, activation, transfer, clock editing, event-Done and cooling APIs cannot bypass managed child transitions. English UI strings are in `frontend/lib/i18n/injection-en.ts`.
+- Generic Complete/Discard cancels unstarted directly linked housing, retaining active descendants. Permanent deletion of an awaiting-flies IB stops source collection; deletion of an untransferred planned cage stops the bottle's preparation without discarding it. Preview exposes those effects; deleted housing must not reappear on refresh. Backup validation checks workflow shapes, links, anchors, phases and temperature history. Undo covers linked operations and reconciles affected survivors in source order; conflicting later physical work retains the existing record-only deletion path.
+
 ## Activity undo and permanent deletion
 
 The Activity trash button offers **delete and undo changes** or **delete the record, keep current state and later work**. Automatic undo is the default when available. If undo conflicts with existing work, record-only deletion stays available; do not reinstate a mandatory reverse-chronological deletion policy. This is distinct from permanent container deletion.
 
 - New operations journal changed rows in `meta` under `activity_undo:` in the same transaction. The journal covers container state, temperatures, logs, events, plans and egg batches; grouped collection + clear is one operation.
 - Preview supplies effects, blockers, required legacy corrections and a fingerprint. Deletion rechecks the fingerprint, validates the projected records, creates a full backup, and atomically reverses the changes/reconciles reminders.
-- Automatic undo never overwrites later edits or activity. Independent log/reminder changes can be undone after unrelated operations. Shared affected rows, clock/state dependencies and ambiguous repeated completion are reported with relevant activities. Whole-container row changes are not field-rebased. Linked children block physical undo, but never force a user to delete the child before using record-only deletion. Imported journals are untrusted data and are shape/scope/record validated.
+- Automatic undo never overwrites later edits or activity. Independent log/reminder changes can be undone after unrelated operations. Shared affected rows, clock/state dependencies and ambiguous repeated completion are reported with relevant activities. Whole-container row changes are not field-rebased. Linked children normally block physical undo; narrowly validated injection operations can remove untouched housing they created or restore their existing destination. Later physical work still blocks reversal but never forces child deletion before using record-only deletion. Imported journals are untrusted data and are shape/scope/record validated.
 - `DELETE /api/containers/{cid}/activities/{lid}` defaults to `mode: undo`. Explicit `mode: keep_later` uses the nested `keep_later.fingerprint`, deletes only the selected log and identifiable owning undo metadata, and retains all other physical rows/events/logs. It rejects state corrections or reminder reopening. Removing a clear log recalculates the derived virgin clock; companion log entries remain, with their grouped undo history removed. An `activity_deleted:` marker prevents later undo metadata from resurrecting the selected log. Backups/export/restore include these markers.
 - Legacy records may need a user-selected previous stage/parent state or specific completed reminders to reopen. Creation, linked transfers, egg operations, and activation without sufficient history may be blocked. Do not invent missing prior state just to make deletion succeed.
 - After activating a planned egg-laying container, undo its activation from the **destination's Activity**. That reversal also removes the corresponding source log. Directly deleting that source log remains blocked because it does not own the activation journal.
@@ -157,7 +175,7 @@ The assistant is **read-only**: no container/event mutation, plan application, b
 
 `POST /api/ai/models` calls authenticated provider `GET /models` using draft connection settings, without saving them or sending laboratory records. Saved credentials are reused only for the same profile/origin. Listing success is distinct from generation success; unsupported listing retains manual model entry. Keep bounded responses, error redaction and transport diagnostics.
 
-Not implemented: researcher-authored workflow editor, deterministic multi-container backward experiment solver, saved executable L1/L3 experiment plans, built-in reference database/retrieval, or transgenesis workflow. Existing setup-date and minimal-cooling searches are implemented but bounded approximations, not a global biological optimizer. The standalone HTML experiment prototype is a design reference with fictional data, not a live integration.
+Not implemented: researcher-authored workflow editor, deterministic multi-container backward experiment solver, saved executable L1/L3 experiment plans, built-in reference database/retrieval, or transgenesis steps following the implemented injection preparation chain. Existing setup-date and minimal-cooling searches are implemented but bounded approximations, not a global biological optimizer. The standalone HTML experiment prototype is a design reference with fictional data, not a live integration.
 
 ## References and continuing work
 

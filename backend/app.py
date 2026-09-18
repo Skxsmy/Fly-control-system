@@ -18,6 +18,9 @@ from .domain import (DEFAULT_SETTINGS, DEFAULT_TEMPLATE, start_of, parse, effect
                      generated_events, event_conflict, virgin_clock, suggest_cooling, incubation_window, eclosion_estimate)
 from .container_cleanup import preview_container_deletion, delete_container_permanently, next_container_label
 from . import activity_cleanup, activity_record_cleanup
+from . import injection
+from .injection import InjectionState
+from .timing import RateTimeline
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.environ.get("FLYKEEPER_DB", ROOT / "data" / "flykeeper.db"))
@@ -219,8 +222,8 @@ class Incubation(BaseModel):
 
 class ContainerInput(BaseModel):
     label: str = Field("", max_length=80)
-    kind: Literal["vial", "bottle", "petri_dish", "egg_laying"] = "vial"
-    purpose: Literal["stock", "cross", "virgin", "larvae", "egg_laying", "dissection", "imaging", "other"] = "cross"
+    kind: Literal["vial", "bottle", "petri_dish", "egg_laying", "cage"] = "vial"
+    purpose: Literal["stock", "cross", "virgin", "larvae", "egg_laying", "dissection", "imaging", "other", "injection"] = "cross"
     genotype: str = Field("", max_length=1000)
     female_genotype: str = Field("", max_length=1000)
     male_genotype: str = Field("", max_length=1000)
@@ -237,6 +240,7 @@ class ContainerInput(BaseModel):
     incubation: Incubation | None = None
     egg_batch_id: str | None = None
     workflow: 'Workflow | None' = None
+    injection: InjectionState | None = None
 
     @field_validator("setup_time")
     @classmethod
@@ -250,7 +254,11 @@ class ContainerInput(BaseModel):
 
     @model_validator(mode="after")
     def genotype_required(self):
-        if self.kind == 'petri_dish':
+        if self.purpose == 'injection':
+            if (self.kind not in ('bottle', 'cage') or not self.injection
+                    or self.injection.role != ('cage' if self.kind == 'cage' else 'conditioning')):
+                raise ValueError('injection_protocol_required')
+        elif self.kind == 'petri_dish':
             if self.purpose not in ('dissection', 'imaging', 'other') or not self.incubation or not self.setup_time:
                 raise ValueError('dish_protocol_required')
         elif self.kind == 'egg_laying':
@@ -260,6 +268,8 @@ class ContainerInput(BaseModel):
                 raise ValueError('egg_setup_time_required')
         elif self.purpose not in ('stock', 'cross', 'virgin', 'larvae'):
             raise ValueError('invalid_purpose')
+        elif self.kind == 'cage':
+            raise ValueError('injection_protocol_required')
         if self.kind != 'petri_dish' and (self.incubation or self.egg_batch_id):
             raise ValueError('invalid_egg_source')
         if self.purpose == 'cross':
@@ -366,6 +376,7 @@ def state():
     with database() as db:
         settings = settings_of(db)
         now = now_of(db)
+        injection.refresh_due(db, sys.modules[__name__])
         exceptions = [json.loads(x[0]) for x in db.execute("SELECT payload FROM availability ORDER BY date")]
         containers = [json.loads(x[0]) for x in db.execute("SELECT payload FROM containers ORDER BY label")]
         for c in containers:
@@ -376,7 +387,10 @@ def state():
             c["calendar_day"] = (now.date() - date.fromisoformat(c["setup_date"])).days
             c["effective_age"] = round(effective_age(c, temps, now), 1)
             c["clock"] = virgin_clock(c, temps, c["logs"], now)
-            if c['kind'] in ('vial', 'bottle'):
+            if (c.get('injection') or {}).get('role') in ('conditioning', 'cage'):
+                anchor = c['injection'].get('started_at')
+                c['injection_day'] = int(RateTimeline(parse(anchor)).elapsed_seconds(now) // 86400) if anchor else None
+            if c['kind'] in ('vial', 'bottle') and c['purpose'] != 'injection':
                 c['eclosion_estimate'] = eclosion_estimate(c, temps)
             if c['kind'] == 'egg_laying':
                 c['genotype_review_required'] = not bool(c.get('genotype', '').strip())
@@ -395,6 +409,8 @@ def state():
 
 @app.post("/api/containers")
 def new_container(model: ContainerInput):
+    if model.injection or model.kind == 'cage' or model.purpose == 'injection':
+        raise HTTPException(409, 'use_injection_workflow')
     with database() as db:
         return create_container(db, model)
 
@@ -410,7 +426,8 @@ class DeleteContainerInput(BaseModel):
 @app.delete('/api/containers/{cid}')
 def delete_container(cid: str, model: DeleteContainerInput):
     with database() as db:
-        return delete_container_permanently(db, cid, model.confirmation_label, model.fingerprint, ROOT / 'backups')
+        return delete_container_permanently(db, cid, model.confirmation_label, model.fingerprint, ROOT / 'backups',
+                                           at=now_of(db).isoformat(timespec='minutes'))
 
 class DeleteActivityInput(BaseModel):
     fingerprint: str
@@ -456,6 +473,16 @@ class EditContainer(BaseModel):
 def edit_container(cid: str, model: EditContainer):
     with database() as db:
         c = get_container(db, cid)
+        if c.get('injection') and model.temperature_policy != 'forbidden':
+            raise HTTPException(409, 'use_injection_workflow')
+        if c['purpose'] == 'injection':
+            if ((model.setup_date and model.setup_date.isoformat() != c['setup_date'])
+                    or ('setup_time' in model.model_fields_set and model.setup_time != c.get('setup_time'))
+                    or model.temperature_policy != 'forbidden'
+                    or model.template.model_dump(mode='json') != c['template']
+                    or (model.workflow is not None and model.workflow.model_dump(mode='json') != c.get('workflow'))
+                    or model.incubation is not None):
+                raise HTTPException(409, 'use_injection_workflow')
         reconcile(db, c)
         changes = model.model_dump(mode="json", exclude={"setup_date", "setup_time", "incubation", "workflow"})
         if model.workflow is not None:
@@ -535,6 +562,9 @@ def transfer(cid: str, model: TransferInput):
     with database() as db:
         activity_before = activity_cleanup.snapshot(db)
         c = get_container(db, cid)
+        if (c['purpose'] == 'injection' or (c.get('injection') and model.mode == 'generation')
+                or model.injection or model.purpose == 'injection' or model.kind == 'cage'):
+            raise HTTPException(409, 'use_injection_workflow')
         if c['kind'] in ('petri_dish', 'egg_laying') or model.kind in ('petri_dish', 'egg_laying'):
             raise HTTPException(409, 'use_egg_workflow')
         at = parse(model.setup_date.isoformat() + "T" + (model.setup_time or "00:00"))
@@ -603,6 +633,8 @@ def egg_laying_from_container(cid: str, model: EggLayingFromInput):
     with database() as db:
         activity_before = activity_cleanup.snapshot(db)
         source = get_container(db, cid)
+        if source['purpose'] == 'injection':
+            raise HTTPException(409, 'use_injection_workflow')
         if source['kind'] not in ('vial', 'bottle'):
             raise HTTPException(409, 'egg_laying_source_required')
         planned = model.initial_status == 'planned'
@@ -646,11 +678,20 @@ def action(cid: str, model: ActionInput):
     with database() as db:
         activity_before = activity_cleanup.snapshot(db)
         c = get_container(db, cid)
+        if c.get('injection') and model.action == 'cold':
+            raise HTTPException(409, 'temperature_forbidden')
+        if c['purpose'] == 'injection' and model.action not in ('complete', 'discard'):
+            raise HTTPException(409, 'use_injection_workflow')
         if model.action == 'third_instar' and c['kind'] not in ('vial', 'bottle'):
             raise HTTPException(409, 'third_instar_culture_required')
         if c['kind'] == 'petri_dish' and model.action in ('remove', 'clear', 'collect', 'tissue'):
             raise HTTPException(409, 'use_egg_workflow')
         at = model.at.replace(tzinfo=None)
+        if c.get('injection') and model.action in ('complete', 'discard'):
+            previous = [parse(value) for key, value in c['injection'].items()
+                        if key in ('initiated_at', 'started_at', 'transferred_at', 'renewed_at', 'finished_at') and value]
+            if previous and at < max(previous):
+                raise HTTPException(422, 'invalid_action_time')
         if (at < start_of(c) and model.action != "activate") or at > now_of(db) + timedelta(minutes=1):
             raise HTTPException(422, "invalid_action_time")
         if c['kind'] == 'egg_laying' and model.action == 'activate' and at > now_of(db):
@@ -679,6 +720,9 @@ def action(cid: str, model: ActionInput):
                 c['first_eclosion_at'] = min(stamp, c.get('first_eclosion_at') or stamp)
         elif model.action in ("complete", "discard"):
             c["status"] = "completed" if model.action == "complete" else "discarded"
+            if c.get('injection'):
+                injection.close_pending_housing(db, sys.modules[__name__], c, stamp)
+                c['injection'].update(phase='finished', finished_at=stamp)
         elif model.action == "activate":
             if c['kind'] == 'petri_dish' and at < parse(c['incubation']['lay_end']):
                 raise HTTPException(422, 'egg_window_after_setup')
@@ -788,6 +832,12 @@ def update_event(eid: str, model: EventUpdate):
         if not row:
             raise HTTPException(404, "event_not_found")
         e = json.loads(row[0])
+        if e['kind'].startswith('injection_') and model.status == 'done':
+            raise HTTPException(409, 'use_injection_workflow')
+        if (e.get('container_id') and e['kind'] in ('cold', 'warm')
+                and (model.restore or model.status == 'pending')
+                and get_container(db, e['container_id']).get('injection')):
+            raise HTTPException(409, 'temperature_forbidden')
         if e['kind'] == 'egg_setup' and model.status == 'done':
             raise HTTPException(409, 'egg_setup_activation_required')
         if e["container_id"] and (model.restore or model.status == "pending") and get_container(db, e["container_id"])["status"] in ("completed", "discarded"):
@@ -799,6 +849,8 @@ def update_event(eid: str, model: EventUpdate):
             e.update(due=model.due.isoformat(timespec="minutes"), end=(model.end or model.due + length).isoformat(timespec="minutes"), pinned=True)
         elif model.end:
             e.update(end=model.end.isoformat(timespec='minutes'), pinned=True)
+        if e.get('all_day') is not None and (model.due or model.end):
+            e['all_day'] = e['due'][11:16] == '00:00' and e['end'] == e['due'][:10] + 'T23:59'
         if model.restore:
             e.update(pinned=False, status="pending")
         if parse(e["end"]) < parse(e["due"]):
@@ -917,6 +969,8 @@ def put_settings(model: SettingsInput):
 def suggestions(cid: str):
     with database() as db:
         c = get_container(db, cid)
+        if c.get('injection'):
+            return {'state': 'forbidden', 'options': []}
         reconcile(db, c)
         exceptions = [json.loads(x[0]) for x in db.execute("SELECT payload FROM availability")]
         # A pinned critical event cannot be treated as a movable developmental event.
@@ -1064,6 +1118,7 @@ def egg_batch_action(bid: str, model: EggBatchAction):
 
 from . import ai_assistant, ai_models, workspace_restore
 
+injection.install_routes(app, sys.modules[__name__])
 ai_assistant.install_routes(app, sys.modules[__name__])
 ai_models.install_routes(app, sys.modules[__name__])
 app.include_router(workspace_restore.make_router(sys.modules[__name__]))

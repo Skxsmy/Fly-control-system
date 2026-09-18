@@ -5,7 +5,7 @@ export type Template = {
 };
 export type ActivityRecord = {id: string; at: string; action: string; notes: string};
 export type Culture = {
-  id: string; label: string; kind: 'vial' | 'bottle' | 'petri_dish' | 'egg_laying'; purpose: 'stock' | 'cross' | 'virgin' | 'larvae' | 'egg_laying' | 'dissection' | 'imaging' | 'other';
+  id: string; label: string; kind: 'vial' | 'bottle' | 'petri_dish' | 'egg_laying' | 'cage'; purpose: 'stock' | 'cross' | 'virgin' | 'larvae' | 'egg_laying' | 'dissection' | 'imaging' | 'other' | 'injection';
   genotype: string; female_genotype: string; male_genotype: string; setup_date: string; setup_time: string | null;
   initial_temperature: number; temperature: number; temperature_policy: string; notes: string; template: Template;
   cohort_id: string; transfer_index: number; source_id: string | null; parents: string; stage: string; status: string;
@@ -13,12 +13,21 @@ export type Culture = {
   logs: ActivityRecord[];
   clock: {state: string; last_clear: string | null; deadline: string | null};
   incubation?: Incubation | null; egg_batch_id?: string | null;
-  source_relation?: 'egg_laying_transfer' | 'egg_laying_generation' | 'egg_laying_parents' | 'egg_laying_offspring';
+  source_relation?: 'egg_laying_transfer' | 'egg_laying_generation' | 'egg_laying_parents' | 'egg_laying_offspring' | 'injection_preparation' | 'injection_cage';
   adult_source?: 'parents' | 'offspring';
   eclosion_estimate?: EclosionEstimate | null; source_eclosion_estimate?: EclosionEstimate | null;
   genotype_review_required?: boolean; setup_time_review_required?: boolean;
   workflow?: Workflow | null; first_eclosion_at?: string;
   incubation_window?: {start: string; end: string; review: boolean}; egg_age_hours?: number[];
+  injection?: Injection | null;
+  injection_day?: number | null;
+};
+export type Injection = {
+  role: 'source' | 'conditioning' | 'cage';
+  phase: 'collecting' | 'awaiting_flies' | 'conditioning' | 'awaiting_transfer' | 'renew' | 'embryos' | 'finished';
+  initiated_at: string; started_at: string | null; transferred_at: string | null;
+  female_target: number; male_target: number; female_count: number | null; male_count: number | null;
+  cycle: number; renewed_at: string | null; next_renew_at: string | null; finished_at: string | null;
 };
 export type Workflow = {cross_goal: 'score' | 'virgins' | 'third_instar'; third_instar_day?: number; third_instar_window?: string[]; transfer_enabled: boolean; remove_day: number; selection_day: number; selection_days: number; selection_window: string[]; target_genotype: string; selection_notes: string; female_virgins: 'unconfirmed' | 'confirmed'; follow_eclosion: boolean};
 export type EclosionEstimate = {at: string; basis: 'observed' | 'estimated'; source_planned: boolean; date_only?: boolean};
@@ -29,6 +38,7 @@ export type Task = {
   critical: boolean; basis: string; title: string; status: string; pinned: boolean; conflict: boolean;
   egg_batch_id?: string | null; batch_label?: string;
   timing_review?: boolean;
+  all_day?: boolean;
 };
 export type Availability = {date: string; kind: string; windows: string[][]; notes: string};
 export type Settings = {locale: string; timezone: string; weekly: Record<string, string[][]>; template: Template};

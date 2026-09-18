@@ -6,7 +6,7 @@ import type {Culture} from '@/lib/types';
 import {Button} from './ui/button';
 import {Field, Form, Modal} from './fly-forms';
 
-type Preview = {label:string; fingerprint:string; can_delete:boolean; counts:Record<string,number>; blockers:{id:string; label:string}[]};
+type Preview = {label:string; fingerprint:string; can_delete:boolean; counts:Record<string,number>; blockers:{id:string; label:string}[]; effects?: {kind: string; container_id: string; label: string}[]};
 export function DeleteContainerForm({culture, close, deleted}: {culture:Culture; close:()=>void; deleted:()=>Promise<void>}) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error,setError] = useState('');
@@ -16,6 +16,7 @@ export function DeleteContainerForm({culture, close, deleted}: {culture:Culture;
     {error && <p role="alert" className="error">{error}</p>}
     {!preview ? <p>{t('common.loading')}</p> : <>
       <p><strong>{preview.label}</strong></p><ul>{Object.entries(preview.counts).filter(([, count])=>count > 0).map(([key,count])=><li key={key}>{t(`delete.count.${key}`,{count})}</li>)}</ul>
+      {preview.effects?.map(effect => <p className="notice warning" key={`${effect.kind}-${effect.container_id}`}>{t(`delete.effect.${effect.kind}`, {label: effect.label})}</p>)}
       {!preview.can_delete ? <><p className="notice warning">{t('delete.blocked')}</p><ul>{preview.blockers.map(b=><li key={b.id}>{b.label}</li>)}</ul></> : <Form close={close} label={t('delete.confirm')} submit={async form=>{
         const entry = form.get('confirmation_label');
         await api(`/containers/${culture.id}`, 'DELETE', {confirmation_label: typeof entry === 'string' ? entry : '', fingerprint: preview.fingerprint});

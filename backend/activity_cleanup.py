@@ -25,7 +25,9 @@ STAGES = ['unobserved', 'larvae', 'pupae', 'eclosion', 'first_instar']
 PARENTS = ['present', 'removed', 'transferred']
 RECORD_ACTIONS = {'collect', 'tissue', 'dissect', 'image', 'score', 'third_instar'}
 CONTAINER_ACTIONS = {'activate', 'setup_planned', 'remove', 'clear', 'larvae', 'pupae',
-                     'eclosion', 'first_instar', 'complete', 'discard', 'transfer'}
+                     'eclosion', 'first_instar', 'complete', 'discard', 'transfer',
+                     'injection_preparation', 'injection_collect', 'injection_transfer',
+                     'injection_renew', 'injection_embryos'}
 
 
 def _json(value):
@@ -58,9 +60,11 @@ def record(db, before, cid):
             old, new = before[table].get(rid), after[table].get(rid)
             if old != new:
                 changes.append({'table': table, 'id': rid, 'before': old, 'after': new})
+    touched_containers = {cid, *(change['id'] for change in changes if change['table'] == 'containers')}
     journal = {'version': 1, 'container_id': cid, 'log_ids': log_ids,
                'known_log_ids': [rid for rid, row in after['logs'].items() if row['container_id'] == cid],
-               'known_related_ids': _related(after, cid), 'changes': changes}
+               'known_related_ids': sorted({related for owner in touched_containers for related in _related(after, owner)}),
+               'changes': changes}
     raw = _json(journal)
     if len(raw) > 100000:
         raw = _json({'version': 1, 'container_id': cid, 'log_ids': log_ids, 'unavailable': 'journal_too_large'})
@@ -192,12 +196,77 @@ def _dependent_activities(state, cid, later, changes, db=None, corrections=False
     return dependent
 
 
+def _injection_children(state, cid, journal):
+    """Permit only a workflow operation's immediate injection destination.
+
+    Imported journals are data, not authorization to modify arbitrary linked
+    cultures. Both recorded child versions must preserve provenance and the
+    operation can touch only injection state, activation and its own reminders.
+    """
+    actions = {change['after']['action'] for change in journal['changes']
+               if change['table'] == 'logs' and change['before'] is None and change['after']
+               and change['after']['container_id'] == cid}
+    owner_change = next((change for change in journal['changes']
+                         if change['table'] == 'containers' and change['id'] == cid), None)
+    if not owner_change or not owner_change['after']:
+        return set(), set()
+    def metadata(value):
+        data = value.get('injection')
+        return data if isinstance(data, dict) else {}
+    owner = json.loads(owner_change['after']['payload'])
+    role = metadata(owner).get('role')
+    closing = bool(actions & {'complete', 'discard'})
+    expected = ('conditioning' if role == 'source' and (closing or actions & {'injection_preparation', 'injection_collect'})
+                else 'cage' if role == 'conditioning' and (closing or 'injection_transfer' in actions) else None)
+    if expected is None:
+        return set(), set()
+    allowed, removable = set(), set()
+    mutable = {'setup_date', 'setup_time', 'status', 'parents', 'stage', 'initial_temperature', 'injection'}
+    for change in journal['changes']:
+        if change['table'] != 'containers' or change['id'] == cid or not change['after']:
+            continue
+        child = json.loads(change['after']['payload'])
+        if (child.get('source_id') != cid or child.get('purpose') != 'injection'
+                or metadata(child).get('role') != expected
+                or child.get('kind') != ('bottle' if expected == 'conditioning' else 'cage')):
+            continue
+        if change['before']:
+            previous = json.loads(change['before']['payload'])
+            if closing and (previous.get('status') != 'planned' or child.get('status') != 'discarded'
+                            or metadata(previous).get('phase') != ('awaiting_flies' if expected == 'conditioning' else 'awaiting_transfer')
+                            or metadata(child).get('phase') != 'finished'):
+                continue
+            if closing and (
+                    {k: v for k, v in previous.items() if k not in ('status', 'injection')} !=
+                    {k: v for k, v in child.items() if k not in ('status', 'injection')}
+                    or {k: v for k, v in previous['injection'].items() if k not in ('phase', 'finished_at')} !=
+                    {k: v for k, v in child['injection'].items() if k not in ('phase', 'finished_at')}):
+                continue
+            if {k: v for k, v in previous.items() if k not in mutable} != {k: v for k, v in child.items() if k not in mutable}:
+                continue
+            if metadata(previous).get('role') != expected:
+                continue
+        else:
+            planned_bottle = (expected == 'conditioning' and child.get('status') == 'planned'
+                              and metadata(child).get('phase') == 'awaiting_flies' and 'injection_preparation' in actions)
+            transferred_cage = (expected == 'cage' and child.get('status') == 'active'
+                                and metadata(child).get('phase') == 'renew' and 'injection_transfer' in actions
+                                and owner.get('status') == 'discarded' and metadata(owner).get('phase') == 'finished')
+            if not (planned_bottle or transferred_cage):
+                continue
+        allowed.add(change['id'])
+        if change['before'] is None:
+            removable.add(change['id'])
+    return allowed, removable
+
+
 def _journal_plan(state, cid, lid, journal, db=None):
     blockers, changes, effects = [], [], ['remove_activity']
     if journal.get('unavailable'):
         return [], effects, [journal['unavailable']], []
     current = json.loads(state['containers'][cid]['payload'])
     source_id = current.get('source_id')
+    injection_children, removable_children = _injection_children(state, cid, journal)
     inserted_children = {}
     for change in journal['changes']:
         if change['table'] == 'containers' and change['before'] is None and change['after'] is not None:
@@ -211,13 +280,26 @@ def _journal_plan(state, cid, lid, journal, db=None):
         row = change['after'] or change['before']
         owner = _owner(table, row)
         if owner != cid:
-            if owner in inserted_children and change['before'] is None:
+            if owner in injection_children:
+                if table not in ('containers', 'logs', 'events', 'temperatures'):
+                    return [], effects, ['invalid_journal'], []
+                if owner in removable_children and change['before'] is not None:
+                    return [], effects, ['invalid_journal'], []
+                if table == 'logs' and (change['before'] is not None or not change['after']
+                                        or row['action'] not in ('created', 'activate', 'discard',
+                                                                 'injection_collect', 'injection_transfer', 'injection_flies_added',
+                                                                 'injection_plan_cancelled')):
+                    return [], effects, ['invalid_journal'], []
+                if table == 'events' and any(not json.loads(version['payload']).get('kind', '').startswith('injection_')
+                                             for version in (change['before'], change['after']) if version):
+                    return [], effects, ['invalid_journal'], []
+            elif owner in inserted_children and change['before'] is None:
                 if owner in state['containers']:
                     blockers.append('linked_container')
                 elif rid in state[table]:
                     blockers.append('changed_record')
                 continue
-            if not (table == 'logs' and owner == source_id and change['before'] is None
+            elif not (table == 'logs' and owner == source_id and change['before'] is None
                     and row['action'] in ('egg_laying_parents', 'egg_laying_offspring')
                     and row['notes'] == current['label']):
                 return [], effects, ['invalid_journal'], []
@@ -244,8 +326,16 @@ def _journal_plan(state, cid, lid, journal, db=None):
     if dependent:
         blockers.append('dependent_activity')
     physical_changes = any(change['table'] not in ('logs', 'events') for change in changes)
-    if physical_changes and any(rid not in journal['known_related_ids'] for rid in _related(state, cid)):
+    related_owners = {cid, *injection_children}
+    if physical_changes and any(rid not in journal['known_related_ids'] for owner in related_owners for rid in _related(state, owner)):
         blockers.append('linked_container')
+    # Removing a mistaken destination is safe only while it is still
+    # exactly the records inserted by the operation, with no later work.
+    changed_ids = {(change['table'], change['id']) for change in changes}
+    for child_id in removable_children:
+        if any((table, rid) not in changed_ids for table in COLUMNS for rid, row in state[table].items()
+               if _owner(table, row) == child_id):
+            blockers.append('changed_record')
     return changes, effects, list(dict.fromkeys(blockers)), dependent
 
 
@@ -408,8 +498,12 @@ def delete_activity(db, cid, lid, fingerprint, corrections, reopen_event_ids, ba
     if services is not None:
         _validate_projection(db, changes, journal_key, services)
     backup = _backup_before_delete(db, backup_dir)
-    # Child creation is a blocker, so undo never inserts/deletes containers.
-    for change in changes:
+    # Remove owned rows before an untouched created child, respecting foreign
+    # keys. Restored containers precede all rows that refer to them.
+    ordered = sorted(changes, key=lambda change: (
+        0 if change['table'] == 'containers' and change['before'] is not None else
+        2 if change['table'] == 'containers' else 1))
+    for change in ordered:
         table, rid, previous = change['table'], change['id'], change['before']
         if previous is None:
             db.execute(f'DELETE FROM {table} WHERE id=?', (rid,))
@@ -420,5 +514,14 @@ def delete_activity(db, cid, lid, fingerprint, corrections, reopen_event_ids, ba
                        tuple(previous[column] for column in columns))
     if journal_key:
         db.execute('DELETE FROM meta WHERE key=?', (journal_key,))
-    reconcile(db, get_container(db, cid))
+    affected = {cid, *(_owner(change['table'], change['before'] or change['after']) for change in changes)}
+    remaining = {row['id']: json.loads(row['payload']) for row in db.execute('SELECT id,payload FROM containers')}
+    def depth(owner):
+        seen = set()
+        while owner in remaining and owner not in seen:
+            seen.add(owner)
+            owner = remaining[owner].get('source_id')
+        return len(seen)
+    for owner in sorted(affected & remaining.keys(), key=depth):
+        reconcile(db, get_container(db, owner))
     return {'deleted': lid, 'backup': backup.name}

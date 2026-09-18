@@ -54,6 +54,7 @@ Use **Transfer parents** to continue with the same adults; the new container tra
 | Temperature and setup planning | Record actual 18°C/25°C moves, view adjusted developmental estimates, and request setup-date or cooling suggestions around your availability. Accepting a cooling plan creates reminders; record the actual moves separately. |
 | Timed egg work | Create an egg-laying container from an existing vial/bottle, selecting parents or offspring and a known adult genotype. Record laying windows and egg collections; use aliquots for Petri dishes, dissection, imaging, or other work. |
 | Hourly incubation | Track an egg-age range and an editable first-instar estimate from the original laying window. Record observed first instar, dissection, and imaging. |
+| Injection preparation | Collect adults from a vial/bottle into a separately numbered preparation bottle, transfer them to a linked cage, and run repeated 30-minute embryo collections. |
 | Corrections | Delete an operation from **Activity** and undo its changes, or delete only the record while keeping current state and later work. Independent entries can be removed in any order. The preview explains retained data and any clock changes. |
 | Cleanup | **End culture** and **Discard culture** retain history. **Delete container permanently** removes a mistaken container after a preview and backup, releases its label, and is blocked by dependent records. |
 
@@ -69,6 +70,17 @@ Changing protocol values in **Protocols & settings** updates the affected remind
 
 Cooling delays developmental reminders; recording a return to 25°C brings them forward relative to continued cooling, retaining the delay already accumulated. Parent transfer/removal, stock renewal, and manually rescheduled reminders keep their calendar times. Hourly egg protocols do not use this temperature adjustment. Timing predictions are estimates; check suitability for your genotype and experimental conditions. Reminders appear in the app; there are no closed-app notifications.
 
+## Injection preparation
+
+Open an active vial/bottle and choose **Injection preparation**. The source must be at 25°C; cooling is unavailable during this workflow. Confirm the collected flies' genotype, especially when the source is a cross.
+
+1. Stock renewal is cancelled and **Collect flies** appears for D10–12. The target is at least **200 females**, about **50–67 males**, with female:male **3:1–4:1**. Record the actual counts when collection is complete.
+2. The linked **IB** bottle waits for those flies and yeast. Completing collection starts its D0 at the actual confirmation time and cancels the other collection reminders.
+3. At preparation **D4**, a linked **C** cage with a yeast plate appears as planned. Confirm **Transfer all flies to cage** to activate it and discard the IB bottle. The cage inherits the bottle's D0.
+4. At **D5**, record **Renew yeast plate**. Embryo collection is due **30 minutes after the actual replacement**. On collection, choose to immediately renew the plate and start another 30-minute interval, or finish.
+
+Source D10–12 retains the effect of temperature history recorded before preparation. Preparation D4/D5 use elapsed time from collection completion. Finishing embryo collection stops the reminders; it does not automatically discard the cage.
+
 ## Optional AI assistant
 
 1. Open **Protocols & settings → AI connection** and choose **Cloud API** or **Local model**.
@@ -76,7 +88,7 @@ Cooling delays developmental reminders; recording a return to 25°C brings them 
 3. Click **Fetch models**, select a model, or enter its ID manually. Choose **Save and test** to check that the model can respond.
 4. Open **Assistant**, choose whether to include workspace data, and ask a question or discuss an L1/L3 dissection schedule. You can select individual containers and their sources as context.
 
-With a cloud connection, the selected workspace records—including genotypes and notes—and the conversation are sent to that provider. AI replies are advisory: the assistant cannot modify records or apply a plan. Conversations are lost on page reload. A workflow editor and automatic experimental-plan execution are not yet implemented; transgenesis workflows are deferred.
+With a cloud connection, the selected workspace records—including genotypes and notes—and the conversation are sent to that provider. AI replies are advisory: the assistant cannot modify records or apply a plan. Conversations are lost on page reload. A workflow editor and automatic experimental-plan execution are not yet implemented. Injection preparation is available; the subsequent transgenesis workflow is not implemented.
 
 ## Back up and restore
 

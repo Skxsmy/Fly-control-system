@@ -53,6 +53,9 @@ def eclosion_estimate(container, temperatures):
 def generated_events(container, temperatures):
     if container["status"] not in ("active", "planned"):
         return []
+    if container.get('injection'):
+        from .injection import generated_events as injection_events
+        return injection_events(container, temperatures)
     template = container["template"]
     origin = start_of(container)
     events = []

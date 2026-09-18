@@ -58,8 +58,19 @@ forecast, and return to 25°C advances it relative to continued cooling while
 retaining the delay already accumulated. Manual reminder times stay fixed.
 This is an estimated collection target, not observed stage confirmation.
 Egg-laying and Petri-dish timing do not use this temperature conversion.
-Transgenesis is deferred until the researcher defines its
-workflow. First-instar dissection may use source adults -> egg-laying -> egg batch
+The researcher-defined injection preparation workflow is available: source vial/
+bottle D10-12 Collect flies (not virgins), target >=200 females, about 50-67 males,
+female:male 3:1-4:1; collected adults with yeast in a linked IB bottle; all adults
+to a linked cage on preparation D4; renew yeast plate on D5; embryos 30 minutes
+after actual plate renewal. Continuing embryo collection records immediate plate
+renewal at that same actual timestamp, then another 30-minute interval. The source
+and linked housing stay at 25°C during preparation. Earlier temperature history
+still affects source D10-12. Injection started_at is actual fly-collection
+completion: the IB bottle has no running D0 before that; cage D0 inherits it.
+D4/D5 use elapsed time from this anchor, not new developmental estimates. A planned
+cage is not an actual transfer; only transfer confirmation discards the IB bottle.
+Subsequent transgenesis steps remain deferred until defined by the researcher.
+First-instar dissection may use source adults -> egg-laying -> egg batch
 -> Petri dish -> observed stage -> dissection; reuse suitable existing material.
 A hatch estimate is not a guaranteed interval for first-instar dissection.
 

@@ -20,7 +20,7 @@ For the current implementation, development commands, known limitations, and wor
 - Virgin collection uses one configured culture day with three windows. Do not add collection days.
 - Third-instar collection in vials/bottles uses the researcher's editable 25°C-equivalent D5 preset, adjusted using recorded temperature history. Keep the configured daily collection window.
 - Every new time-related action, reminder, or planner must use the shared `backend/timing.py` engine and the explicit anchor/clock-basis rules in HANDOFF.md. Do not implement independent temperature date-offset logic.
-- Transgenesis is deferred until the researcher defines its workflow.
+- The researcher-defined injection preparation chain is implemented; subsequent transgenesis steps remain deferred. During preparation, source vials/bottles and linked housing stay at 25°C. Earlier temperature history still affects source D10–12; linked bottle D4/cage D5 use elapsed time from actual collection completion, and repeated embryo collection uses 30 minutes from actual plate renewal. Continuing collection records immediate plate renewal in the same operation.
 - Keep planned work separate from recorded physical operations. Keep genotype targets separate from verified selected genotypes.
 - AI architecture supports cloud and local connections; implement one first. Do not present an unconnected model or an unimplemented planner as working.
 

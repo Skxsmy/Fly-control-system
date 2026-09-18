@@ -1,7 +1,8 @@
 import aiEn from './ai-en';
 import backupEn from './backup-en';
+import injectionEn from './injection-en';
 const en: Record<string, string> = {
-  ...aiEn, ...backupEn,
+  ...aiEn, ...backupEn, ...injectionEn,
   'nav.assistant': 'Assistant', 'assistant.askContainer': 'Ask assistant about this container',
   'app.name': 'Flykeeper',
   'nav.today': 'Today', 'nav.containers': 'Containers', 'nav.calendar': 'Calendar', 'nav.settings': 'Protocols & settings',
